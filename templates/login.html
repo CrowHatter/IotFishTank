@@ -13,22 +13,27 @@
         
         {% with messages = get_flashed_messages() %}
           {% if messages %}
-            <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-2 rounded mb-4 text-sm">
-              {{ messages[0] }}
-            </div>
+            {% for message in messages %}
+              <div class="bg-red-100 border-l-4 border-red-500 text-red-700 p-3 rounded mb-4 text-sm animate-pulse">
+                <p class="font-bold">提示：</p>
+                <p>{{ message }}</p>
+              </div>
+            {% endfor %}
           {% endif %}
         {% endwith %}
 
         <form method="POST">
             <div class="mb-4">
                 <label class="block text-gray-700 text-sm font-bold mb-2">管理員帳號</label>
-                <input type="text" name="username" class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" required>
+                <input type="text" name="username" class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all" required autocomplete="username">
             </div>
             <div class="mb-6">
                 <label class="block text-gray-700 text-sm font-bold mb-2">密碼</label>
-                <input type="password" name="password" class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" required>
+                <input type="password" name="password" class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all" required autocomplete="current-password">
             </div>
-            <button type="submit" class="w-full bg-blue-600 text-white font-bold py-3 rounded-lg hover:bg-blue-700 transition active:scale-95">登入</button>
+            <button type="submit" class="w-full bg-blue-600 text-white font-bold py-3 rounded-lg hover:bg-blue-700 transition active:scale-95 shadow-lg">
+                登入系統
+            </button>
         </form>
     </div>
 </body>
