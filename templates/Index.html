@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>FishTank Pro - Final Fix</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .sticky-video { position: sticky; top: 0; z-index: 40; background: #000; }
+        #video-container { cursor: default; touch-action: none; user-select: none; background: #000; }
+        #video-stream { 
+            width: 100%; height: 100%; object-fit: contain;
+            transform-origin: center center;
+            pointer-events: none; transition: transform 0.1s ease-out;
+        }
+        #video-container:fullscreen { width: 100vw; height: 100vh; display: flex; align-items: center; justify-content: center; }
+        .zoom-active { cursor: grab !important; }
+        .grabbing { cursor: grabbing !important; }
+        #video-container:fullscreen #fs-controls { display: flex; }
+        
+        /* 提高 Modal 層級，確保在置頂影片之上 */
+        .modal-bg { background-color: rgba(0, 0, 0, 0.7); z-index: 100; }
+        .modal-content { z-index: 110; }
+    </style>
+</head>
+<body class="bg-gray-100 font-sans">
+
+    <div class="sticky-video shadow-lg">
+        <div id="video-container" class="max-w-5xl mx-auto aspect-video relative overflow-hidden">
+            <video id="video-stream" autoplay loop muted playsinline>
+                <source src="/static/resource/demo.mp4" type="video/mp4">
+            </video>
+            
+            <div id="fs-controls" class="absolute top-4 right-4 flex space-x-4 z-50" onclick="event.stopPropagation()">
+                <button onclick="triggerFeed()" class="text-3xl hover:scale-110 transition-transform">
+                    <span id="icon-feed">🍖</span>
+                </button>
+                <button id="btn-light-icon" onclick="toggleLight()" class="hover:scale-110 transition-transform">
+                    <img id="icon-light" src="/static/resource/light_off.png" class="w-8 h-8 object-contain">
+                </button>
+            </div>
+
+            <button onclick="toggleFS(event)" class="absolute bottom-4 right-4 bg-black/40 text-white px-3 py-1 rounded text-sm hover:bg-black/60 z-50">
+                ⛶ 全螢幕
+            </button>
+        </div>
+    </div>
+
+    <div class="max-w-5xl mx-auto p-4 space-y-6">
+        <div class="bg-white rounded-xl p-6 shadow-sm flex justify-between items-center border-l-4 border-blue-500">
+            <div>
+                <h1 class="text-xl font-bold">智慧魚缸監控系統</h1>
+                <p class="text-gray-500 text-sm">Status: <span id="conn-status" class="text-green-500 font-bold">● Connected</span></p>
+            </div>
+            <div class="text-right">
+                <span id="temp-display" class="text-3xl font-mono font-bold text-blue-500">26.5°C</span>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <button onclick="openManager('feed')" class="bg-white border border-gray-200 py-4 rounded-xl font-medium shadow-sm hover:shadow-md transition">📅 餵食排程管理</button>
+            <button onclick="openManager('water')" class="bg-white border border-gray-200 py-4 rounded-xl font-medium shadow-sm hover:shadow-md transition">💧 換水排程管理</button>
+            
+            <button id="main-btn-light" onclick="toggleLight()" class="bg-gray-800 text-white py-4 rounded-xl font-bold shadow-md flex items-center justify-center transition-all active:scale-95">
+                <img id="main-icon-light" src="/static/resource/light_off.png" class="w-5 h-5 mr-2 object-contain">
+                <span id="main-text-light">開啟燈光</span>
+            </button>
+            <button id="main-btn-feed" onclick="triggerFeed()" class="bg-red-600 text-white py-4 rounded-xl font-bold shadow-md transition-all active:scale-95">
+                🚀 立即餵食
+            </button>
+        </div>
+    </div>
+
+    <div id="manager-modal" class="fixed inset-0 modal-bg hidden flex items-center justify-center p-4">
+        <div class="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden modal-content">
+            <div class="p-4 border-b flex justify-between items-center bg-gray-50">
+                <h2 id="modal-title" class="font-bold text-lg">排程管理</h2>
+                <button onclick="closeManager()" class="text-2xl text-gray-400 hover:text-black">&times;</button>
+            </div>
+            <div id="schedule-list" class="p-4 space-y-3 max-h-60 overflow-y-auto">
+                </div>
+            <div class="p-4 bg-gray-100 border-t flex space-x-2">
+                <input type="time" id="new-time" class="flex-1 border rounded p-2 outline-none focus:ring-2 focus:ring-blue-500">
+                <button onclick="addItem()" class="bg-blue-600 text-white px-4 py-2 rounded font-bold hover:bg-blue-700">新增</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- API 資料處理 ---
+        let config = { feed: [], water: [] };
+        let activeType = '';
+
+        async function loadConfig() {
+            try {
+                const res = await fetch('/api/config');
+                config = await res.json();
+                if(activeType) renderList(); 
+            } catch (e) { console.error("Config Loading Error:", e); }
+        }
+
+        async function saveConfig() {
+            await fetch('/api/config', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(config)
+            });
+        }
+
+        async function sendAction(actionName) {
+            await fetch('/api/action', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({action: actionName})
+            });
+        }
+
+        // --- 核心縮放與平移 (Mobile Pinch Support) ---
+        let scale = 1, translateX = 0, translateY = 0;
+        let isDragging = false, startX, startY;
+        let initialPinchDistance = 0;
+
+        const container = document.getElementById('video-container');
+        const video = document.getElementById('video-stream');
+
+        function updateTransform() {
+            if (scale <= 1) { scale = 1; translateX = 0; translateY = 0; container.classList.remove('zoom-active'); }
+            else {
+                container.classList.add('zoom-active');
+                const rect = container.getBoundingClientRect();
+                const maxW = (rect.width * scale - rect.width) / 2;
+                const maxH = (rect.height * scale - rect.height) / 2;
+                translateX = Math.min(Math.max(translateX, -maxW), maxW);
+                translateY = Math.min(Math.max(translateY, -maxH), maxH);
+            }
+            video.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scale})`;
+        }
+
+        // 滾輪縮放
+        window.addEventListener('wheel', (e) => { 
+            if (e.ctrlKey) { e.preventDefault(); scale = Math.min(Math.max(1, scale + e.deltaY * -0.001), 4); updateTransform(); }
+        }, { passive: false });
+
+        // 觸控邏輯
+        container.addEventListener('touchstart', (e) => {
+            if (e.touches.length === 1) {
+                if (scale <= 1) return;
+                isDragging = true;
+                startX = e.touches[0].pageX - translateX;
+                startY = e.touches[0].pageY - translateY;
+            } else if (e.touches.length === 2) {
+                isDragging = false;
+                initialPinchDistance = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
+            }
+        }, { passive: false });
+
+        container.addEventListener('touchmove', (e) => {
+            if (e.touches.length === 1 && isDragging) {
+                e.preventDefault();
+                translateX = e.touches[0].pageX - startX;
+                translateY = e.touches[0].pageY - startY;
+                updateTransform();
+            } else if (e.touches.length === 2) {
+                e.preventDefault();
+                const currentDist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
+                const delta = (currentDist - initialPinchDistance) * 0.01;
+                scale = Math.min(Math.max(1, scale + delta), 4);
+                initialPinchDistance = currentDist;
+                updateTransform();
+            }
+        }, { passive: false });
+
+        container.addEventListener('touchend', () => { isDragging = false; initialPinchDistance = 0; });
+
+        // PC 拖曳
+        container.addEventListener('mousedown', (e) => { if (scale <= 1) return; isDragging = true; startX = e.pageX - translateX; startY = e.pageY - translateY; });
+        window.addEventListener('mousemove', (e) => { if (!isDragging) return; translateX = e.pageX - startX; translateY = e.pageY - startY; updateTransform(); });
+        window.addEventListener('mouseup', () => { isDragging = false; });
+
+        // 全螢幕切換
+        async function toggleFS(e) {
+            if (e) e.stopPropagation();
+            if (!document.fullscreenElement) {
+                try {
+                    await container.requestFullscreen();
+                    if (screen.orientation && screen.orientation.lock) await screen.orientation.lock('landscape');
+                } catch (err) { console.log(err); }
+            } else { document.exitFullscreen(); }
+        }
+
+        document.addEventListener('fullscreenchange', () => { 
+            scale = 1; updateTransform(); 
+            if (!document.fullscreenElement && screen.orientation && screen.orientation.unlock) screen.orientation.unlock();
+        });
+
+        // --- 排程管理功能 (修正) ---
+        function openManager(type) {
+            activeType = type;
+            document.getElementById('modal-title').innerText = type === 'feed' ? '🍖 餵食排程管理' : '💧 換水排程管理';
+            renderList();
+            document.getElementById('manager-modal').classList.remove('hidden');
+        }
+
+        function closeManager() {
+            document.getElementById('manager-modal').classList.add('hidden');
+        }
+
+        function renderList() {
+            const list = document.getElementById('schedule-list');
+            const items = config[activeType] || [];
+            list.innerHTML = items.map(item => `
+                <div class="flex justify-between items-center p-3 bg-gray-50 rounded-lg border shadow-sm">
+                    <span class="font-mono font-bold text-lg">${item.time}</span>
+                    <button onclick="deleteItem(${item.id})" class="text-red-500 hover:bg-red-50 px-2 py-1 rounded">刪除</button>
+                </div>`).join('') || '<p class="text-gray-400 text-center py-4">目前無排程</p>';
+        }
+
+        async function addItem() {
+            const t = document.getElementById('new-time').value;
+            if(!t) return alert("請選擇時間");
+            config[activeType].push({id: Date.now(), time: t});
+            await saveConfig();
+            renderList();
+        }
+
+        async function deleteItem(id) {
+            config[activeType] = config[activeType].filter(i => i.id !== id);
+            await saveConfig();
+            renderList();
+        }
+
+        // --- 立即動作 ---
+        let isLightOn = false, isFeeding = false;
+        async function triggerFeed() {
+            if (isFeeding) return;
+            isFeeding = true;
+            sendAction('feed');
+            document.getElementById('icon-feed').innerText = '⏳';
+            document.getElementById('main-btn-feed').innerText = '餵食中...';
+            document.getElementById('main-btn-feed').classList.replace('bg-red-600', 'bg-gray-400');
+            setTimeout(() => { 
+                isFeeding = false; 
+                document.getElementById('icon-feed').innerText = '🍖';
+                document.getElementById('main-btn-feed').innerText = '🚀 立即餵食';
+                document.getElementById('main-btn-feed').classList.replace('bg-gray-400', 'bg-red-600');
+            }, 5000);
+        }
+
+        async function toggleLight() {
+            isLightOn = !isLightOn;
+            sendAction(isLightOn ? 'light_on' : 'light_off');
+            const path = isLightOn ? '/static/resource/light_on.png' : '/static/resource/light_off.png';
+            document.getElementById('icon-light').src = path;
+            document.getElementById('main-icon-light').src = path;
+            document.getElementById('main-text-light').innerText = isLightOn ? '關閉燈光' : '開啟燈光';
+            const mainBtn = document.getElementById('main-btn-light');
+            if(isLightOn) mainBtn.classList.replace('bg-gray-800', 'bg-yellow-500'); else mainBtn.classList.replace('bg-yellow-500', 'bg-gray-800');
+        }
+
+        // 初始化加載
+        loadConfig();
+    </script>
+</body>
+</html>
