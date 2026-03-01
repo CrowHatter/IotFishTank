@@ -44,4 +44,4 @@ def trigger_action():
 
 if __name__ == '__main__':
     # 讓同區域網路的設備都能連線 (host='0.0.0.0')
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=5080, debug=True)
