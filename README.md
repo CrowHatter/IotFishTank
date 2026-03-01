@@ -54,15 +54,15 @@
 * **電源：** 驅動板電源建議外部供電，並與 Pi 共地 (Common Ground)。
 
 ### 2. 環境設定
-~~~bash
+```bash
 # 安裝依賴套件
 pip install flask opencv-python RPi.GPIO
-~~~
+```
 
 ### 3. 執行程式
-~~~bash
+```bash
 python app.py
-~~~
+```
 造訪 `http://<your-pi-ip>:5000` 即可開啟監控中心。
 
 ---

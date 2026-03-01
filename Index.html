@@ -7,10 +7,25 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         .sticky-video { position: sticky; top: 0; z-index: 40; background: #000; }
-        /* 影片縮放 */
-        #video-stream { transition: transform 0.1s ease; transform-origin: center center; width: 100%; height: 100%; object-fit: cover; }
         
-        /* 全螢幕下的控制項：YouTube 樣式 */
+        #video-container { 
+            cursor: default; 
+            touch-action: none; 
+            user-select: none;
+        }
+        
+        #video-stream { 
+            width: 100%; 
+            height: 100%; 
+            object-fit: cover;
+            transform-origin: center center;
+            pointer-events: none; 
+            transition: transform 0.1s ease-out;
+        }
+        
+        .zoom-active { cursor: grab !important; }
+        .grabbing { cursor: grabbing !important; }
+
         #video-container:fullscreen #fs-controls { display: flex; }
         .modal-bg { background-color: rgba(0, 0, 0, 0.7); }
     </style>
@@ -20,7 +35,7 @@
     <div class="sticky-video shadow-lg group">
         <div id="video-container" class="max-w-5xl mx-auto aspect-video relative overflow-hidden bg-black">
             <video id="video-stream" autoplay loop muted playsinline>
-                <source src="demo.mp4" type="video/mp4">
+                <source src="resource/demo.mp4" type="video/mp4">
                 您的瀏覽器不支援影片播放。
             </video>
             
@@ -29,7 +44,7 @@
                     <span id="icon-feed">🍖</span>
                 </button>
                 <button id="btn-light-icon" onclick="toggleLight()" class="bg-black/50 hover:bg-yellow-500 text-white p-2 rounded-full transition-colors" title="開關燈">
-                    <span id="icon-light">💡</span>
+                    <img id="icon-light" src="resource/light_off.png" class="w-6 h-6 object-contain" alt="Light Icon">
                 </button>
             </div>
 
@@ -43,19 +58,21 @@
         <div class="bg-white rounded-xl p-6 shadow-sm flex justify-between items-center border-l-4 border-blue-500">
             <div>
                 <h1 class="text-xl font-bold">智慧魚缸監控系統</h1>
-                <p class="text-gray-500 text-sm">Status: <span class="text-green-500">Connected</span></p>
+                <p class="text-gray-500 text-sm">Status: <span class="text-green-500 font-bold">● Connected</span></p>
             </div>
             <div class="text-right">
                 <span id="temp-display" class="text-3xl font-mono font-bold text-blue-500">26.5°C</span>
+                <p class="text-xs text-gray-400">水溫穩定</p>
             </div>
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <button onclick="openManager('feed')" class="bg-white border border-gray-200 py-4 rounded-xl hover:shadow-md transition">📅 餵食排程管理</button>
-            <button onclick="openManager('water')" class="bg-white border border-gray-200 py-4 rounded-xl hover:shadow-md transition">💧 換水排程管理</button>
+            <button onclick="openManager('feed')" class="bg-white border border-gray-200 py-4 rounded-xl hover:shadow-md transition font-medium">📅 餵食排程管理</button>
+            <button onclick="openManager('water')" class="bg-white border border-gray-200 py-4 rounded-xl hover:shadow-md transition font-medium">💧 換水排程管理</button>
             
-            <button id="main-btn-light" onclick="toggleLight()" class="bg-gray-800 text-white py-4 rounded-xl font-bold shadow-md transition-all active:scale-95">
-                💡 開啟燈光
+            <button id="main-btn-light" onclick="toggleLight()" class="bg-gray-800 text-white py-4 rounded-xl font-bold shadow-md transition-all active:scale-95 flex items-center justify-center">
+                <img id="main-icon-light" src="resource/light_off.png" class="w-5 h-5 mr-2 object-contain" alt="Icon">
+                <span id="main-text-light">開啟燈光</span>
             </button>
             <button id="main-btn-feed" onclick="triggerFeed()" class="bg-red-600 text-white py-4 rounded-xl font-bold shadow-md transition-all active:scale-95">
                 🚀 立即餵食
@@ -64,31 +81,113 @@
     </div>
 
     <div id="manager-modal" class="fixed inset-0 modal-bg hidden z-50 flex items-center justify-center p-4">
-        <div class="bg-white w-full max-w-md rounded-2xl shadow-2xl">
-            <div class="p-4 border-b flex justify-between items-center">
-                <h2 id="modal-title" class="font-bold">管理</h2>
-                <button onclick="closeManager()" class="text-2xl">&times;</button>
+        <div class="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden">
+            <div class="p-4 border-b flex justify-between items-center bg-gray-50">
+                <h2 id="modal-title" class="font-bold text-lg">排程管理</h2>
+                <button onclick="closeManager()" class="text-2xl text-gray-400 hover:text-black">&times;</button>
             </div>
-            <div id="schedule-list" class="p-4 space-y-2 max-h-60 overflow-y-auto"></div>
-            <div class="p-4 bg-gray-50 rounded-b-2xl border-t">
-                <div class="flex space-x-2">
-                    <input type="time" id="new-time" class="flex-1 border rounded p-2">
-                    <button onclick="addItem()" class="bg-blue-600 text-white px-4 py-2 rounded">新增</button>
-                </div>
+            <div id="schedule-list" class="p-4 space-y-3 max-h-60 overflow-y-auto"></div>
+            <div class="p-4 bg-gray-100 border-t flex space-x-2">
+                <input type="time" id="new-time" class="flex-1 border rounded p-2 outline-none">
+                <button onclick="addItem()" class="bg-blue-600 text-white px-4 py-2 rounded font-bold">新增</button>
             </div>
         </div>
     </div>
 
     <script>
+        // --- 狀態管理 ---
         let isLightOn = false;
         let isFeeding = false;
+        let config = { feed: [{id: 1, time: "08:00"}], water: [{id: 3, time: "12:00"}] };
+        let activeType = '';
 
-        // 1. 餵食邏輯 (5秒回歸)
+        // --- 縮放與平移變數 ---
+        let scale = 1;
+        let translateX = 0;
+        let translateY = 0;
+        let isDragging = false;
+        let startX, startY;
+
+        const container = document.getElementById('video-container');
+        const video = document.getElementById('video-stream');
+
+        // 更新畫面位置 (含邊界限制)
+        function updateTransform() {
+            if (scale <= 1) {
+                scale = 1;
+                translateX = 0;
+                translateY = 0;
+                container.classList.remove('zoom-active');
+            } else {
+                container.classList.add('zoom-active');
+                
+                // 限制邊界邏輯
+                const rect = container.getBoundingClientRect();
+                const maxW = (rect.width * scale - rect.width) / 2;
+                const maxH = (rect.height * scale - rect.height) / 2;
+
+                translateX = Math.min(Math.max(translateX, -maxW), maxW);
+                translateY = Math.min(Math.max(translateY, -maxH), maxH);
+            }
+            video.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scale})`;
+        }
+
+        // 1. 滾輪縮放 (PC Ctrl + Wheel)
+        window.addEventListener('wheel', (e) => {
+            if (e.ctrlKey) {
+                e.preventDefault();
+                const delta = e.deltaY * -0.001;
+                scale = Math.min(Math.max(1, scale + delta), 4);
+                updateTransform();
+            }
+        }, { passive: false });
+
+        // 2. 拖曳控制
+        const dragStart = (e) => {
+            if (scale <= 1) return;
+            isDragging = true;
+            container.classList.add('grabbing');
+            const clientX = e.pageX || e.touches[0].pageX;
+            const clientY = e.pageY || e.touches[0].pageY;
+            startX = clientX - translateX;
+            startY = clientY - translateY;
+        };
+
+        const dragMove = (e) => {
+            if (!isDragging) return;
+            e.preventDefault();
+            const clientX = e.pageX || e.touches[0].pageX;
+            const clientY = e.pageY || e.touches[0].pageY;
+            translateX = clientX - startX;
+            translateY = clientY - startY;
+            updateTransform();
+        };
+
+        const dragEnd = () => {
+            isDragging = false;
+            container.classList.remove('grabbing');
+        };
+
+        container.addEventListener('mousedown', dragStart);
+        window.addEventListener('mousemove', dragMove);
+        window.addEventListener('mouseup', dragEnd);
+        container.addEventListener('touchstart', dragStart, {passive: false});
+        container.addEventListener('touchmove', dragMove, {passive: false});
+        container.addEventListener('touchend', dragEnd);
+
+        // 監聽全螢幕回歸重置
+        document.addEventListener('fullscreenchange', () => {
+            if (!document.fullscreenElement) {
+                scale = 1;
+                updateTransform();
+            }
+        });
+
+        // --- 功能邏輯 ---
+
         function triggerFeed() {
             if (isFeeding) return;
             isFeeding = true;
-            
-            // 更新圖示與按鈕狀態
             document.getElementById('icon-feed').innerText = '⏳';
             document.getElementById('main-btn-feed').innerText = '餵食中...';
             document.getElementById('main-btn-feed').classList.replace('bg-red-600', 'bg-gray-400');
@@ -101,33 +200,32 @@
             }, 5000);
         }
 
-        // 2. 開關燈邏輯 (切換)
         function toggleLight() {
             isLightOn = !isLightOn;
             const icon = document.getElementById('icon-light');
+            const mainIcon = document.getElementById('main-icon-light');
+            const mainText = document.getElementById('main-text-light');
             const mainBtn = document.getElementById('main-btn-light');
             const btnIconContainer = document.getElementById('btn-light-icon');
 
+            const path = isLightOn ? 'resource/light_on.png' : 'resource/light_off.png';
+            
+            icon.src = path;
+            mainIcon.src = path;
+            mainText.innerText = isLightOn ? '關閉燈光' : '開啟燈光';
+
             if (isLightOn) {
-                icon.innerText = '🌟';
-                mainBtn.innerText = '💡 關閉燈光';
                 mainBtn.classList.replace('bg-gray-800', 'bg-yellow-500');
-                btnIconContainer.classList.replace('bg-black/50', 'bg-yellow-500');
             } else {
-                icon.innerText = '💡';
-                mainBtn.innerText = '💡 開啟燈光';
                 mainBtn.classList.replace('bg-yellow-500', 'bg-gray-800');
                 btnIconContainer.classList.replace('bg-yellow-500', 'bg-black/50');
             }
         }
 
-        // 3. 管理視窗與其餘邏輯 (同前次更新)
-        let config = { feed: [{id: 1, time: "08:00"}], water: [{id: 3, time: "12:00"}] };
-        let activeType = '';
-
+        // --- 排程管理 ---
         function openManager(type) {
             activeType = type;
-            document.getElementById('modal-title').innerText = type === 'feed' ? '餵食排程' : '換水排程';
+            document.getElementById('modal-title').innerText = type === 'feed' ? '🍖 餵食排程' : '💧 換水排程';
             renderList();
             document.getElementById('manager-modal').classList.remove('hidden');
         }
@@ -135,7 +233,7 @@
         function renderList() {
             const list = document.getElementById('schedule-list');
             list.innerHTML = config[activeType].map(item => `
-                <div class="flex justify-between items-center p-3 bg-gray-50 rounded border">
+                <div class="flex justify-between items-center p-3 bg-gray-50 rounded-lg border">
                     <span class="font-mono font-bold">${item.time}</span>
                     <button onclick="deleteItem(${item.id})" class="text-red-500">刪除</button>
                 </div>`).join('');
@@ -151,21 +249,9 @@
             renderList();
         }
         function toggleFS() {
-            const el = document.getElementById('video-container');
-            if (!document.fullscreenElement) el.requestFullscreen();
+            if (!document.fullscreenElement) container.requestFullscreen();
             else document.exitFullscreen();
         }
-
-        // PC 縮放控制
-        window.addEventListener('wheel', (e) => {
-            if (e.ctrlKey) {
-                e.preventDefault();
-                const v = document.getElementById('video-stream');
-                let s = parseFloat(v.style.transform.replace('scale(', '').replace(')', '')) || 1;
-                s = Math.min(Math.max(1, s + e.deltaY * -0.001), 3);
-                v.style.transform = `scale(${s})`;
-            }
-        }, { passive: false });
     </script>
 </body>
 </html>
