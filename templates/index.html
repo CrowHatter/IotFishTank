@@ -117,12 +117,15 @@
         // --- 2. 餵食動作與狀態回饋 ---
         async function triggerFeed() {
             if (isFeeding) return;
-
-            // 切換為「餵食中」UI 狀態
+            
+            // 1. 進入「餵食中」UI 狀態
             isFeeding = true;
             const iconFeed = document.getElementById('icon-feed');
             const mainBtn = document.getElementById('main-btn-feed');
             const mainText = document.getElementById('main-text-feed');
+
+            const originalIcon = iconFeed.innerText;
+            const originalText = mainText.innerText;
 
             iconFeed.innerText = '⏳';
             mainText.innerText = '餵食中...請稍候';
@@ -135,15 +138,23 @@
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({action: 'feed'})
                 });
+
                 const data = await res.json();
-                if (data.status === 'busy') alert("馬達正忙，請稍後再試！");
+            
+                // 2. 關鍵修正：只有在後端明確回傳 busy 時才報錯
+                if (data.status === 'busy') {
+                    alert("馬達正忙（可能正在執行自動排程），請稍後再試！");
+                } 
+                // 如果是 'success' 或 'received'，不做任何事，直接走 finally 恢復 UI
+
             } catch (e) {
-                alert("連接失敗");
+                console.error("連線失敗:", e);
+                alert("無法連線至伺服器");
             } finally {
-                // 動作結束，恢復 UI
+                // 3. 動作結束，恢復 UI
                 isFeeding = false; 
-                iconFeed.innerText = '🍖';
-                mainText.innerText = '🚀 立即餵食';
+                iconFeed.innerText = originalIcon;
+                mainText.innerText = originalText;
                 mainBtn.disabled = false;
                 mainBtn.classList.replace('bg-gray-400', 'bg-red-600');
             }
