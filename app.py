@@ -190,6 +190,8 @@ def get_config():
 def update_config():
     with file_lock:
         write_json(CONFIG_FILE, request.json)
+    print("偵測到設定變更，立即觸發同步檢查...")
+    check_schedule()
     return jsonify({"status": "success"})
 
 @app.route('/api/action', methods=['POST'])
