@@ -117,7 +117,7 @@
         // --- 2. 餵食動作與狀態回饋 ---
         async function triggerFeed() {
             if (isFeeding) return;
-            
+
             // 1. 進入「餵食中」UI 狀態
             isFeeding = true;
             const iconFeed = document.getElementById('icon-feed');
@@ -127,31 +127,28 @@
             const originalIcon = iconFeed.innerText;
             const originalText = mainText.innerText;
 
+            // 視覺回饋：鎖定按鈕
             iconFeed.innerText = '⏳';
-            mainText.innerText = '餵食中...請稍候';
+            mainText.innerText = '餵食中...';
             mainBtn.disabled = true;
             mainBtn.classList.replace('bg-red-600', 'bg-gray-400');
 
             try {
-                const res = await fetch('/api/action', {
+                // 2. 發送請求並等待後端馬達執行完畢 (約 3-5 秒)
+                await fetch('/api/action', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({action: 'feed'})
                 });
-
-                const data = await res.json();
-            
-                // 2. 關鍵修正：只有在後端明確回傳 busy 時才報錯
-                if (data.status === 'busy') {
-                    alert("馬達正忙（可能正在執行自動排程），請稍後再試！");
-                } 
-                // 如果是 'success' 或 'received'，不做任何事，直接走 finally 恢復 UI
-
+        
+            // 這裡不再判斷 data.status，也不顯示任何 alert
+            // 因為按鈕被 disable 了，使用者本來就無法在執行中再次點擊
+        
             } catch (e) {
-                console.error("連線失敗:", e);
-                alert("無法連線至伺服器");
+                console.error("Feed Error:", e);
+                // 只有在連線完全斷掉時才在 console 紀錄，不打擾使用者
             } finally {
-                // 3. 動作結束，恢復 UI
+                // 3. 無論結果如何，動作結束後恢復 UI
                 isFeeding = false; 
                 iconFeed.innerText = originalIcon;
                 mainText.innerText = originalText;

@@ -30,7 +30,7 @@ class FishFeeder:
         print("開始餵食程序...")
         self.rotate(1/72, direction=1)  # 順時針
         time.sleep(0.5)                 # 稍微停頓
-        self.rotate(1/18, direction=-1) # 逆時針
+        self.rotate(1/36, direction=-1) # 逆時針
         print("餵食程序完成。")
 
     def stop(self):
