@@ -7,41 +7,40 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         .sticky-video { position: sticky; top: 0; z-index: 40; background: #000; }
-        #video-container { cursor: default; touch-action: none; user-select: none; background: #000; }
+        /* 容器層：隱藏溢出內容，設置手勢操作 */
+        #video-container { cursor: default; touch-action: none; user-select: none; background: #000; overflow: hidden; }
         
+        /* 影像層：增加平滑轉換效果 */
         #video-stream { 
             width: 100%; height: 100%; object-fit: contain;
-            transform-origin: center center;
-            pointer-events: none; transition: transform 0.1s ease-out;
+            transform-origin: center center; /* 縮放中心點 */
+            pointer-events: none; /* 讓事件穿透到容器 */
+            transition: transform 0.1s ease-out; /* 平滑移動 */
             display: block;
         }
         
         #video-container:fullscreen { width: 100vw; height: 100vh; display: flex; align-items: center; justify-content: center; }
+        
+        /* 縮放狀態下的滑鼠游標 */
         .zoom-active { cursor: grab !important; }
         .grabbing { cursor: grabbing !important; }
+        
         .modal-bg { background-color: rgba(0, 0, 0, 0.7); z-index: 100; }
         .modal-content { z-index: 110; }
 
         .day-btn { 
-            border: 1px solid #d1d5db; 
-            border-radius: 0.5rem; 
-            font-size: 0.75rem; 
-            transition: all 0.2s;
-            background-color: white;
-            padding: 0.5rem 0;
+            border: 1px solid #d1d5db; border-radius: 0.5rem; font-size: 0.75rem; 
+            transition: all 0.2s; background-color: white; padding: 0.5rem 0;
         }
         .day-btn.active { 
-            background-color: #2563eb; 
-            color: white; 
-            border-color: #2563eb;
-            font-weight: bold;
+            background-color: #2563eb; color: white; border-color: #2563eb; font-weight: bold;
         }
     </style>
 </head>
 <body class="bg-gray-100 font-sans">
 
     <div class="sticky-video shadow-lg">
-        <div id="video-container" class="max-w-5xl mx-auto aspect-video relative overflow-hidden">
+        <div id="video-container" class="max-w-5xl mx-auto aspect-video relative overflow-hidden bg-black">
             <img id="video-stream" src="/video_feed" alt="Fish Tank Live Stream">
             
             <div id="fs-controls" class="absolute top-4 right-4 flex space-x-4 z-50" onclick="event.stopPropagation()">
@@ -141,59 +140,94 @@
         let isFeeding = false;
         const dayNamesShort = ["日", "一", "二", "三", "四", "五", "六"];
 
-        // 縮放狀態變數
+        // --- 核心：補回並優化縮放與拖曳邏輯 (含邊界限制) ---
         let scale = 1, translateX = 0, translateY = 0;
         let isDragging = false, startX, startY, initialDist = 0;
         const container = document.getElementById('video-container');
         const videoImg = document.getElementById('video-stream');
 
-        // 縮放更新邏輯
+        // 更新影像變換效果 (關鍵：邊界限制算法)
         function updateTransform() {
             if (scale <= 1) { 
+                // 恢復原狀
                 scale = 1; translateX = 0; translateY = 0; 
-                container.classList.remove('zoom-active'); 
+                container.classList.remove('zoom-active', 'grabbing'); 
             } else {
+                // 放大狀態，應用邊界限制
                 container.classList.add('zoom-active');
+                
+                // 1. 計算影像相對於容器放大了多少像素
                 const rect = container.getBoundingClientRect();
-                const maxW = (rect.width * scale - rect.width) / 2;
-                const maxH = (rect.height * scale - rect.height) / 2;
+                const zoomedWidth = rect.width * scale;
+                const zoomedHeight = rect.height * scale;
+                
+                // 2. 計算單邊的最大拖曳位移量 (Overflow / 2)
+                const maxW = (zoomedWidth - rect.width) / 2;
+                const maxH = (zoomedHeight - rect.height) / 2;
+                
+                // 3. 限制位移量，不讓影像邊緣跑進黑框
                 translateX = Math.min(Math.max(translateX, -maxW), maxW);
                 translateY = Math.min(Math.max(translateY, -maxH), maxH);
             }
+            
+            // 應用 CSS Transform
             videoImg.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scale})`;
         }
 
-        // 觸控事件監聽 (縮放/拖動)
+        // --- 手機觸控事件 (雙指縮放 + 單指拖曳) ---
         container.addEventListener('touchstart', (e) => {
-            if (e.touches.length === 1 && scale > 1) {
-                isDragging = true; 
-                startX = e.touches[0].pageX - translateX; 
-                startY = e.touches[0].pageY - translateY;
+            if (e.touches.length === 1) {
+                // 單指：如果是放大狀態，準備拖曳
+                if (scale > 1) {
+                    isDragging = true; 
+                    container.classList.add('grabbing');
+                    // 紀錄起點，需減去當前的位移量以實現連續拖曳
+                    startX = e.touches[0].pageX - translateX; 
+                    startY = e.touches[0].pageY - translateY;
+                }
             } else if (e.touches.length === 2) {
+                // 雙指：準備縮放，取消拖曳狀態
                 isDragging = false; 
-                initialDist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
+                container.classList.remove('grabbing');
+                // 計算雙指初始距離 (畢氏定理)
+                initialDist = Math.hypot(
+                    e.touches[0].pageX - e.touches[1].pageX, 
+                    e.touches[0].pageY - e.touches[1].pageY
+                );
             }
         });
 
         container.addEventListener('touchmove', (e) => {
             if (e.touches.length === 1 && isDragging) {
-                e.preventDefault(); 
+                // 單指拖曳中
+                e.preventDefault(); // 防止網頁捲動
                 translateX = e.touches[0].pageX - startX; 
                 translateY = e.touches[0].pageY - startY; 
                 updateTransform();
             } else if (e.touches.length === 2) {
+                // 雙指縮放中
                 e.preventDefault();
-                const dist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
+                // 計算當前雙指距離
+                const dist = Math.hypot(
+                    e.touches[0].pageX - e.touches[1].pageX, 
+                    e.touches[0].pageY - e.touches[1].pageY
+                );
+                // 計算縮放增量 (乘上系數 0.01 調整靈敏度)
                 const delta = (dist - initialDist) * 0.01;
+                // 限制縮放倍率在 1~4 倍之間
                 scale = Math.min(Math.max(1, scale + delta), 4);
-                initialDist = dist; 
+                initialDist = dist; // 更新基準距離
                 updateTransform();
             }
         }, { passive: false });
 
-        container.addEventListener('touchend', () => { isDragging = false; initialDist = 0; });
+        container.addEventListener('touchend', () => { 
+            isDragging = false; 
+            container.classList.remove('grabbing');
+            initialDist = 0; 
+        });
 
-        // 滑鼠滾輪縮放 (PC 端 Ctrl+滾輪)
+        // --- PC 滑鼠事件 (Ctrl+滾輪縮放 + 滑鼠拖曳) ---
         container.addEventListener('wheel', (e) => {
             if (e.ctrlKey || e.metaKey) {
                 e.preventDefault();
@@ -203,7 +237,30 @@
             }
         }, { passive: false });
 
-        // --- 原有邏輯 ---
+        container.addEventListener('mousedown', (e) => {
+            if (scale > 1) {
+                isDragging = true;
+                container.classList.add('grabbing');
+                startX = e.pageX - translateX;
+                startY = e.pageY - translateY;
+            }
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            if (isDragging && scale > 1) {
+                e.preventDefault();
+                translateX = e.pageX - startX;
+                translateY = e.pageY - startY;
+                updateTransform();
+            }
+        });
+
+        window.addEventListener('mouseup', () => {
+            isDragging = false;
+            container.classList.remove('grabbing');
+        });
+
+        // --- 原有排程管理與 API 邏輯 ---
         const hourSelect = document.getElementById('new-hour');
         for(let i=1; i<=12; i++) {
             let h = i.toString().padStart(2, '0');
@@ -364,14 +421,23 @@
                     else if (container.webkitRequestFullscreen) await container.webkitRequestFullscreen();
                     
                     if (screen.orientation && screen.orientation.lock) {
-                        await screen.orientation.lock('landscape').catch(err => console.log("Orientation lock denied"));
+                        await screen.orientation.lock('landscape').catch(err => console.log("Lock denied"));
                     }
                 } catch (err) { console.error(err); }
             } else {
                 if (document.exitFullscreen) document.exitFullscreen();
                 if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock();
+                // 退出全螢幕時重設縮放
+                scale = 1; updateTransform();
             }
         }
+
+        // 監聽全螢幕變化 (處理 ESC 鍵退出)
+        document.addEventListener('fullscreenchange', () => {
+            if (!document.fullscreenElement) {
+                scale = 1; updateTransform();
+            }
+        });
 
         loadConfig();
     </script>
