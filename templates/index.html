@@ -14,6 +14,17 @@
 
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
+        /* 頁面 Banner */
+        .app-banner {
+            background-color: #2563eb; /* 統一的藍色基調 */
+            color: white;
+            padding: 1rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
         .sticky-video { position: sticky; top: 0; z-index: 40; background: #000; }
         #video-container { cursor: default; touch-action: none; user-select: none; background: #000; overflow: hidden; }
         #video-stream { 
@@ -32,6 +43,17 @@
     </style>
 </head>
 <body class="bg-gray-100 font-sans">
+
+    <div class="app-banner">
+        <div class="flex items-center gap-3">
+            <img src="/static/resource/icon.png" class="w-8 h-8 rounded-lg shadow-md filter brightness-0 invert" alt="App Icon">
+            <h1 class="text-xl font-bold tracking-tight">智慧魚缸監控中心</h1>
+        </div>
+        <div class="flex items-center gap-2 text-xs opacity-80">
+            <div class="w-2 h-2 rounded-full bg-green-400"></div>
+            連線正常
+        </div>
+    </div>
 
     <div class="sticky-video shadow-lg">
         <div id="video-container" class="max-w-5xl mx-auto aspect-video relative overflow-hidden bg-black">
@@ -56,7 +78,6 @@
         <div class="bg-white rounded-xl p-6 shadow-sm border-l-4 border-blue-500 space-y-2">
             <div class="flex justify-between items-center">
                 <div>
-                    <h1 class="text-xl font-bold text-gray-800">智慧魚缸監控系統</h1>
                     <p class="text-gray-500 text-sm">最後餵食：<span id="last-fed-time" class="text-blue-600 font-medium">載入中...</span></p>
                 </div>
                 <div class="text-right">
