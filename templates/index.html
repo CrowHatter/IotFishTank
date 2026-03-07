@@ -14,17 +14,26 @@
 
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        /* 頁面 Banner */
+        /* 頁面 Banner 優化 */
         .app-banner {
-            background-color: #2563eb; /* 統一的藍色基調 */
+            background-color: #2563eb;
             color: white;
-            padding: 1rem;
+            padding: 0.75rem 1rem;
             display: flex;
             align-items: center;
             justify-content: space-between;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 10px rgba(0,0,0,0.15);
         }
         
+        /* 移除濾鏡，保留原始色彩並增加修飾 */
+        .banner-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            object-fit: cover;
+            border: 1.5px solid rgba(255,255,255,0.3); /* 輕微白邊增加立體感 */
+        }
+
         .sticky-video { position: sticky; top: 0; z-index: 40; background: #000; }
         #video-container { cursor: default; touch-action: none; user-select: none; background: #000; overflow: hidden; }
         #video-stream { 
@@ -46,11 +55,14 @@
 
     <div class="app-banner">
         <div class="flex items-center gap-3">
-            <img src="/static/resource/icon.png" class="w-8 h-8 rounded-lg shadow-md filter brightness-0 invert" alt="App Icon">
-            <h1 class="text-xl font-bold tracking-tight">智慧魚缸監控中心</h1>
+            <img src="/static/resource/icon.png" class="banner-icon" alt="FishTank Icon">
+            <h1 class="text-lg font-bold tracking-wider">智慧魚缸監控中心</h1>
         </div>
-        <div class="flex items-center gap-2 text-xs opacity-80">
-            <div class="w-2 h-2 rounded-full bg-green-400"></div>
+        <div class="flex items-center gap-2 text-[10px] sm:text-xs opacity-90 font-medium">
+            <span class="relative flex h-2 w-2">
+                <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                <span class="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+            </span>
             連線正常
         </div>
     </div>
@@ -75,25 +87,24 @@
     </div>
 
     <div class="max-w-5xl mx-auto p-4 space-y-6">
-        <div class="bg-white rounded-xl p-6 shadow-sm border-l-4 border-blue-500 space-y-2">
-            <div class="flex justify-between items-center">
-                <div>
-                    <p class="text-gray-500 text-sm">最後餵食：<span id="last-fed-time" class="text-blue-600 font-medium">載入中...</span></p>
-                </div>
-                <div class="text-right">
-                    <span id="temp-display" class="text-3xl font-mono font-bold text-blue-500">26.5°C</span>
-                </div>
+        <div class="bg-white rounded-xl p-5 shadow-sm border-l-4 border-blue-500 flex justify-between items-center">
+            <div>
+                <p class="text-gray-400 text-xs mb-1 uppercase tracking-widest font-bold">Status 狀態</p>
+                <p class="text-gray-600 text-sm">最後餵食：<span id="last-fed-time" class="text-blue-600 font-bold">載入中...</span></p>
+            </div>
+            <div class="text-right">
+                <span id="temp-display" class="text-4xl font-mono font-black text-blue-500 tracking-tighter">26.5°C</span>
             </div>
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <button onclick="openManager('auto_feed')" class="bg-white border border-gray-200 py-4 rounded-xl font-medium shadow-sm hover:shadow-md transition">📅 餵食排程管理</button>
-            <button onclick="openManager('auto_water_change')" class="bg-white border border-gray-200 py-4 rounded-xl font-medium shadow-sm hover:shadow-md transition">💧 換水排程管理</button>
-            <button id="main-btn-light" onclick="toggleLight()" class="bg-gray-800 text-white py-4 rounded-xl font-bold shadow-md flex items-center justify-center transition-all active:scale-95">
+            <button onclick="openManager('auto_feed')" class="bg-white border border-gray-100 py-4 rounded-xl font-bold shadow-sm hover:shadow-md transition-all active:scale-95 text-gray-700">📅 餵食排程管理</button>
+            <button onclick="openManager('auto_water_change')" class="bg-white border border-gray-100 py-4 rounded-xl font-bold shadow-sm hover:shadow-md transition-all active:scale-95 text-gray-700">💧 換水排程管理</button>
+            <button id="main-btn-light" onclick="toggleLight()" class="bg-gray-800 text-white py-4 rounded-xl font-black shadow-md flex items-center justify-center transition-all active:scale-95">
                 <img id="main-icon-light" src="/static/resource/light_off.png" class="w-5 h-5 mr-2 object-contain">
                 <span id="main-text-light">開啟燈光</span>
             </button>
-            <button id="main-btn-feed" onclick="triggerFeed()" class="bg-red-600 text-white py-4 rounded-xl font-bold shadow-md transition-all active:scale-95 disabled:opacity-50">
+            <button id="main-btn-feed" onclick="triggerFeed()" class="bg-red-600 text-white py-4 rounded-xl font-black shadow-md transition-all active:scale-95 disabled:opacity-50">
                 <span id="main-text-feed">🚀 立即餵食</span>
             </button>
         </div>
@@ -101,9 +112,9 @@
 
     <div id="pwa-modal" class="fixed inset-0 modal-bg hidden flex items-center justify-center p-4" style="z-index: 200;">
         <div class="bg-white w-full max-w-xs rounded-2xl shadow-2xl p-6 text-center space-y-4">
-            <img src="/static/resource/icon.png" class="w-20 h-20 mx-auto rounded-2xl shadow-lg">
+            <img src="/static/resource/icon.png" class="w-20 h-20 mx-auto rounded-3xl shadow-xl">
             <h3 class="text-xl font-bold text-gray-800">安裝 FishTank Pro</h3>
-            <p id="pwa-text" class="text-gray-500 text-sm">將監控中心加入主畫面，享受全螢幕且更快速的智慧管理體驗！</p>
+            <p id="pwa-text" class="text-gray-500 text-sm leading-relaxed">將監控中心加入主畫面，享受全螢幕且更快速的智慧管理體驗！</p>
             <div id="pwa-actions" class="flex flex-col gap-2 pt-2">
                 <button id="btn-pwa-install" class="bg-blue-600 text-white py-3 rounded-xl font-bold shadow-lg active:scale-95 transition-all">立即安裝</button>
                 <button onclick="closePwaModal()" class="text-gray-400 text-sm py-2">稍後再說</button>
@@ -114,11 +125,11 @@
     <div id="manager-modal" class="fixed inset-0 modal-bg hidden flex items-center justify-center p-4">
         <div class="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden modal-content flex flex-col max-h-[90vh]">
             <div class="p-5 border-b flex justify-between items-center bg-gray-50">
-                <div><h2 id="modal-title" class="font-bold text-xl text-gray-800">排程管理</h2><p class="text-xs text-gray-500">系統每 10 分鐘自動同步一次</p></div>
+                <div><h2 id="modal-title" class="font-bold text-xl text-gray-800">排程管理</h2></div>
                 <button onclick="closeManager()" class="p-2 hover:bg-gray-200 rounded-full text-gray-400"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg></button>
             </div>
             <div id="schedule-list" class="flex-1 overflow-y-auto p-5 space-y-4 bg-gray-50/50"></div>
-            <div class="p-6 bg-white border-t border-gray-100 space-y-5 shadow-[0_-4px_10px_rgba(0,0,0,0.03)]">
+            <div class="p-6 bg-white border-t border-gray-100 space-y-5">
                 <h3 class="text-sm font-semibold text-gray-700">新增自動排程</h3>
                 <div class="grid grid-cols-7 gap-1 bg-gray-100 p-1 rounded-lg">
                     <button class="day-btn" data-day="1">一</button><button class="day-btn" data-day="2">二</button><button class="day-btn" data-day="3">三</button><button class="day-btn" data-day="4">四</button><button class="day-btn" data-day="5">五</button><button class="day-btn" data-day="6">六</button><button class="day-btn" data-day="0">日</button>
@@ -142,13 +153,12 @@
         let isFeeding = false;
         const dayNamesShort = ["日", "一", "二", "三", "四", "五", "六"];
 
-        // --- 影像狀態量 ---
         let scale = 1, translateX = 0, translateY = 0;
         let isDragging = false, startX, startY, initialDist = 0;
         const container = document.getElementById('video-container');
         const videoImg = document.getElementById('video-stream');
 
-        // --- PWA 與 環境偵測 ---
+        // PWA 邏輯
         let deferredPrompt;
         const pwaModal = document.getElementById('pwa-modal');
         const installBtn = document.getElementById('btn-pwa-install');
@@ -169,7 +179,7 @@
                     pwaModal.classList.remove('hidden');
                     if (/iPhone|iPad|iPod/i.test(navigator.userAgent)) {
                         installBtn.classList.add('hidden');
-                        document.getElementById('pwa-text').innerHTML = '請點擊瀏覽器底部的 <span class="font-bold text-blue-600">「分享」</span> 圖示，然後選擇 <span class="font-bold text-blue-600">「加入主畫面」</span>';
+                        document.getElementById('pwa-text').innerHTML = '請點擊 Safari 底部的 <span class="font-bold text-blue-600">「分享」</span> 按鈕，然後選擇 <span class="font-bold text-blue-600">「加入主畫面」</span>';
                     }
                 }, 3000);
             }
@@ -188,7 +198,6 @@
             localStorage.setItem('pwa-prompt-dismissed', 'true');
         }
 
-        // --- 核心：影像操作邏輯 (含邊界限制) ---
         function updateTransform() {
             if (scale <= 1) { 
                 scale = 1; translateX = 0; translateY = 0; 
@@ -204,7 +213,6 @@
             videoImg.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scale})`;
         }
 
-        // 電腦滑鼠事件
         container.addEventListener('wheel', (e) => {
             if (e.ctrlKey || e.metaKey) {
                 e.preventDefault();
@@ -228,7 +236,6 @@
 
         window.addEventListener('mouseup', () => { isDragging = false; container.classList.remove('grabbing'); });
 
-        // 手機觸控事件
         container.addEventListener('touchstart', (e) => {
             if (e.touches.length === 1 && scale > 1) {
                 isDragging = true; startX = e.touches[0].pageX - translateX; startY = e.touches[0].pageY - translateY;
@@ -251,7 +258,6 @@
 
         container.addEventListener('touchend', () => { isDragging = false; container.classList.remove('grabbing'); initialDist = 0; });
 
-        // --- 全螢幕功能 ---
         async function toggleFS(e) { 
             e.stopPropagation(); 
             if (!document.fullscreenElement) {
@@ -266,10 +272,10 @@
             }
         }
 
-        // --- 原有業務邏輯 ---
         const hourSelect = document.getElementById('new-hour');
         for(let i=1; i<=12; i++) { hourSelect.innerHTML += `<option value="${i.toString().padStart(2, '0')}">${i.toString().padStart(2, '0')}</option>`; }
         document.querySelectorAll('.day-btn').forEach(btn => btn.addEventListener('click', () => btn.classList.toggle('active')));
+        
         async function loadConfig() {
             try {
                 const res = await fetch('/api/config');
@@ -278,6 +284,7 @@
                 if(activeType) renderList(); 
             } catch (e) { console.error(e); }
         }
+
         function updateStatusUI() {
             const status = config.device_status;
             document.getElementById('last-fed-time').innerText = status.last_fed || "無紀錄";
@@ -289,6 +296,7 @@
             const btn = document.getElementById('main-btn-light');
             if(isLightOn) btn.classList.replace('bg-gray-800', 'bg-yellow-500'); else btn.classList.replace('bg-yellow-500', 'bg-gray-800');
         }
+
         async function triggerFeed() {
             if (isFeeding) return;
             isFeeding = true;
@@ -301,11 +309,13 @@
                 isFeeding = false; mainBtn.disabled = false; mainBtn.classList.replace('bg-gray-400', 'bg-red-600');
             }
         }
+
         async function toggleLight() {
             const current = config.device_status.light === "on" ? 'light_off' : 'light_on';
             await fetch('/api/action', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: current}) });
             await loadConfig();
         }
+
         function renderList() {
             const list = document.getElementById('schedule-list');
             const items = config[activeType] || [];
@@ -334,6 +344,7 @@
                 </div>`;
             }).join('') || '<p class="text-center text-gray-400 py-10 opacity-50">尚無任何排程</p>';
         }
+
         async function addItem() {
             const ampm = document.getElementById('new-ampm').value;
             let h = parseInt(document.getElementById('new-hour').value);
@@ -346,11 +357,13 @@
             config[activeType].push({ id: Date.now(), time: time24, days: selectedDays, enabled: true });
             await saveConfig(); renderList();
         }
+
         async function saveConfig() { await fetch('/api/config', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(config) }); }
         function openManager(type) { activeType = type; document.getElementById('modal-title').innerText = type === 'auto_feed' ? '📅 餵食排程管理' : '💧 換水排程管理'; renderList(); document.getElementById('manager-modal').classList.remove('hidden'); }
         function closeManager() { document.getElementById('manager-modal').classList.add('hidden'); activeType = ''; }
         async function toggleEnable(id) { const item = config[activeType].find(i => i.id === id); item.enabled = !item.enabled; await saveConfig(); renderList(); }
         async function deleteItem(id) { config[activeType] = config[activeType].filter(i => i.id !== id); await saveConfig(); renderList(); }
+        
         loadConfig();
     </script>
 </body>
