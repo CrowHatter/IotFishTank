@@ -4,37 +4,31 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>FishTank Pro - 智慧監控中心</title>
+    
+    <link rel="manifest" href="/static/manifest.json">
+    <meta name="theme-color" content="#2563eb">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="FishTank">
+    <link rel="apple-touch-icon" href="/static/resource/icon.png">
+
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         .sticky-video { position: sticky; top: 0; z-index: 40; background: #000; }
-        /* 容器層：隱藏溢出內容，設置手勢操作 */
         #video-container { cursor: default; touch-action: none; user-select: none; background: #000; overflow: hidden; }
-        
-        /* 影像層：增加平滑轉換效果 */
         #video-stream { 
             width: 100%; height: 100%; object-fit: contain;
-            transform-origin: center center; /* 縮放中心點 */
-            pointer-events: none; /* 讓事件穿透到容器 */
-            transition: transform 0.1s ease-out; /* 平滑移動 */
+            transform-origin: center center;
+            pointer-events: none; transition: transform 0.1s ease-out;
             display: block;
         }
-        
         #video-container:fullscreen { width: 100vw; height: 100vh; display: flex; align-items: center; justify-content: center; }
-        
-        /* 縮放狀態下的滑鼠游標 */
         .zoom-active { cursor: grab !important; }
         .grabbing { cursor: grabbing !important; }
-        
         .modal-bg { background-color: rgba(0, 0, 0, 0.7); z-index: 100; }
         .modal-content { z-index: 110; }
-
-        .day-btn { 
-            border: 1px solid #d1d5db; border-radius: 0.5rem; font-size: 0.75rem; 
-            transition: all 0.2s; background-color: white; padding: 0.5rem 0;
-        }
-        .day-btn.active { 
-            background-color: #2563eb; color: white; border-color: #2563eb; font-weight: bold;
-        }
+        .day-btn { border: 1px solid #d1d5db; border-radius: 0.5rem; font-size: 0.75rem; transition: all 0.2s; background-color: white; padding: 0.5rem 0; }
+        .day-btn.active { background-color: #2563eb; color: white; border-color: #2563eb; font-weight: bold; }
     </style>
 </head>
 <body class="bg-gray-100 font-sans">
@@ -74,61 +68,48 @@
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <button onclick="openManager('auto_feed')" class="bg-white border border-gray-200 py-4 rounded-xl font-medium shadow-sm hover:shadow-md transition">📅 餵食排程管理</button>
             <button onclick="openManager('auto_water_change')" class="bg-white border border-gray-200 py-4 rounded-xl font-medium shadow-sm hover:shadow-md transition">💧 換水排程管理</button>
-            
             <button id="main-btn-light" onclick="toggleLight()" class="bg-gray-800 text-white py-4 rounded-xl font-bold shadow-md flex items-center justify-center transition-all active:scale-95">
                 <img id="main-icon-light" src="/static/resource/light_off.png" class="w-5 h-5 mr-2 object-contain">
                 <span id="main-text-light">開啟燈光</span>
             </button>
-            
             <button id="main-btn-feed" onclick="triggerFeed()" class="bg-red-600 text-white py-4 rounded-xl font-bold shadow-md transition-all active:scale-95 disabled:opacity-50">
                 <span id="main-text-feed">🚀 立即餵食</span>
             </button>
         </div>
     </div>
 
+    <div id="pwa-modal" class="fixed inset-0 modal-bg hidden flex items-center justify-center p-4" style="z-index: 200;">
+        <div class="bg-white w-full max-w-xs rounded-2xl shadow-2xl p-6 text-center space-y-4">
+            <img src="/static/resource/icon.png" class="w-20 h-20 mx-auto rounded-2xl shadow-lg">
+            <h3 class="text-xl font-bold text-gray-800">安裝 FishTank Pro</h3>
+            <p class="text-gray-500 text-sm">將監控中心加入主畫面，享受全螢幕且更快速的智慧管理體驗！</p>
+            <div class="flex flex-col gap-2 pt-2">
+                <button id="btn-pwa-install" class="bg-blue-600 text-white py-3 rounded-xl font-bold shadow-lg active:scale-95 transition-all">立即安裝</button>
+                <button onclick="closePwaModal()" class="text-gray-400 text-sm py-2">稍後再說</button>
+            </div>
+        </div>
+    </div>
+
     <div id="manager-modal" class="fixed inset-0 modal-bg hidden flex items-center justify-center p-4">
         <div class="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden modal-content flex flex-col max-h-[90vh]">
             <div class="p-5 border-b flex justify-between items-center bg-gray-50">
-                <div>
-                    <h2 id="modal-title" class="font-bold text-xl text-gray-800">排程管理</h2>
-                    <p class="text-xs text-gray-500">系統每 10 分鐘自動同步一次</p>
-                </div>
-                <button onclick="closeManager()" class="p-2 hover:bg-gray-200 rounded-full transition-colors text-gray-400">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-                </button>
+                <div><h2 id="modal-title" class="font-bold text-xl text-gray-800">排程管理</h2><p class="text-xs text-gray-500">系統每 10 分鐘自動同步一次</p></div>
+                <button onclick="closeManager()" class="p-2 hover:bg-gray-200 rounded-full text-gray-400"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg></button>
             </div>
             <div id="schedule-list" class="flex-1 overflow-y-auto p-5 space-y-4 bg-gray-50/50"></div>
             <div class="p-6 bg-white border-t border-gray-100 space-y-5 shadow-[0_-4px_10px_rgba(0,0,0,0.03)]">
                 <h3 class="text-sm font-semibold text-gray-700">新增自動排程</h3>
                 <div class="grid grid-cols-7 gap-1 bg-gray-100 p-1 rounded-lg">
-                    <button class="day-btn" data-day="1">一</button>
-                    <button class="day-btn" data-day="2">二</button>
-                    <button class="day-btn" data-day="3">三</button>
-                    <button class="day-btn" data-day="4">四</button>
-                    <button class="day-btn" data-day="5">五</button>
-                    <button class="day-btn" data-day="6">六</button>
-                    <button class="day-btn" data-day="0">日</button>
+                    <button class="day-btn" data-day="1">一</button><button class="day-btn" data-day="2">二</button><button class="day-btn" data-day="3">三</button><button class="day-btn" data-day="4">四</button><button class="day-btn" data-day="5">五</button><button class="day-btn" data-day="6">六</button><button class="day-btn" data-day="0">日</button>
                 </div>
                 <div class="flex items-center space-x-2">
                     <div class="flex-1 flex items-center bg-gray-50 border border-gray-200 rounded-xl px-2 py-1">
-                        <select id="new-ampm" class="bg-transparent text-sm font-bold outline-none py-2 text-blue-600">
-                            <option value="AM">AM</option>
-                            <option value="PM">PM</option>
-                        </select>
+                        <select id="new-ampm" class="bg-transparent text-sm font-bold outline-none py-2 text-blue-600"><option value="AM">AM</option><option value="PM">PM</option></select>
                         <select id="new-hour" class="bg-transparent text-lg font-mono font-bold w-full outline-none py-2 text-gray-700 text-center"></select>
                         <span class="font-bold text-gray-400 mx-0.5">:</span>
-                        <select id="new-minute" class="bg-transparent text-lg font-mono font-bold w-full outline-none py-2 text-gray-700 text-center">
-                            <option value="00">00</option>
-                            <option value="10">10</option>
-                            <option value="20">20</option>
-                            <option value="30">30</option>
-                            <option value="40">40</option>
-                            <option value="50">50</option>
-                        </select>
+                        <select id="new-minute" class="bg-transparent text-lg font-mono font-bold w-full outline-none py-2 text-gray-700 text-center"><option value="00">00</option><option value="10">10</option><option value="20">20</option><option value="30">30</option><option value="40">40</option><option value="50">50</option></select>
                     </div>
-                    <button onclick="addItem()" class="bg-blue-600 hover:bg-blue-700 text-white w-12 h-12 rounded-xl flex items-center justify-center shadow-lg active:scale-95 transition-all">
-                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
-                    </button>
+                    <button onclick="addItem()" class="bg-blue-600 hover:bg-blue-700 text-white w-12 h-12 rounded-xl flex items-center justify-center shadow-lg active:scale-95 transition-all"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg></button>
                 </div>
             </div>
         </div>
@@ -140,136 +121,110 @@
         let isFeeding = false;
         const dayNamesShort = ["日", "一", "二", "三", "四", "五", "六"];
 
-        // --- 核心：補回並優化縮放與拖曳邏輯 (含邊界限制) ---
+        // --- 影像縮放變量 ---
         let scale = 1, translateX = 0, translateY = 0;
         let isDragging = false, startX, startY, initialDist = 0;
         const container = document.getElementById('video-container');
         const videoImg = document.getElementById('video-stream');
 
-        // 更新影像變換效果 (關鍵：邊界限制算法)
+        // --- PWA 安裝邏輯 ---
+        let deferredPrompt;
+        const pwaModal = document.getElementById('pwa-modal');
+        const installBtn = document.getElementById('btn-pwa-install');
+
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/static/sw.js').then(() => console.log("PWA SW Registered"));
+        }
+
+        window.addEventListener('beforeinstallprompt', (e) => {
+            e.preventDefault();
+            deferredPrompt = e;
+            // 環境檢查：手機、非 PWA 模式、且沒被使用者關閉過
+            const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+            const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
+            const isDismissed = localStorage.getItem('pwa-prompt-dismissed') === 'true';
+
+            if (isMobile && !isStandalone && !isDismissed) {
+                setTimeout(() => pwaModal.classList.remove('hidden'), 3000);
+            }
+        });
+
+        installBtn.addEventListener('click', async () => {
+            if (!deferredPrompt) return;
+            pwaModal.classList.add('hidden');
+            deferredPrompt.prompt();
+            const { outcome } = await deferredPrompt.userChoice;
+            console.log(`User choice: ${outcome}`);
+            deferredPrompt = null;
+        });
+
+        function closePwaModal() {
+            pwaModal.classList.add('hidden');
+            localStorage.setItem('pwa-prompt-dismissed', 'true');
+        }
+
+        // --- 影像變換 (支援邊界限制) ---
         function updateTransform() {
             if (scale <= 1) { 
-                // 恢復原狀
                 scale = 1; translateX = 0; translateY = 0; 
                 container.classList.remove('zoom-active', 'grabbing'); 
             } else {
-                // 放大狀態，應用邊界限制
                 container.classList.add('zoom-active');
-                
-                // 1. 計算影像相對於容器放大了多少像素
                 const rect = container.getBoundingClientRect();
-                const zoomedWidth = rect.width * scale;
-                const zoomedHeight = rect.height * scale;
-                
-                // 2. 計算單邊的最大拖曳位移量 (Overflow / 2)
-                const maxW = (zoomedWidth - rect.width) / 2;
-                const maxH = (zoomedHeight - rect.height) / 2;
-                
-                // 3. 限制位移量，不讓影像邊緣跑進黑框
+                const maxW = (rect.width * scale - rect.width) / 2;
+                const maxH = (rect.height * scale - rect.height) / 2;
                 translateX = Math.min(Math.max(translateX, -maxW), maxW);
                 translateY = Math.min(Math.max(translateY, -maxH), maxH);
             }
-            
-            // 應用 CSS Transform
             videoImg.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scale})`;
         }
 
-        // --- 手機觸控事件 (雙指縮放 + 單指拖曳) ---
         container.addEventListener('touchstart', (e) => {
-            if (e.touches.length === 1) {
-                // 單指：如果是放大狀態，準備拖曳
-                if (scale > 1) {
-                    isDragging = true; 
-                    container.classList.add('grabbing');
-                    // 紀錄起點，需減去當前的位移量以實現連續拖曳
-                    startX = e.touches[0].pageX - translateX; 
-                    startY = e.touches[0].pageY - translateY;
-                }
+            if (e.touches.length === 1 && scale > 1) {
+                isDragging = true; startX = e.touches[0].pageX - translateX; startY = e.touches[0].pageY - translateY;
+                container.classList.add('grabbing');
             } else if (e.touches.length === 2) {
-                // 雙指：準備縮放，取消拖曳狀態
-                isDragging = false; 
-                container.classList.remove('grabbing');
-                // 計算雙指初始距離 (畢氏定理)
-                initialDist = Math.hypot(
-                    e.touches[0].pageX - e.touches[1].pageX, 
-                    e.touches[0].pageY - e.touches[1].pageY
-                );
+                isDragging = false; initialDist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
             }
         });
 
         container.addEventListener('touchmove', (e) => {
             if (e.touches.length === 1 && isDragging) {
-                // 單指拖曳中
-                e.preventDefault(); // 防止網頁捲動
-                translateX = e.touches[0].pageX - startX; 
-                translateY = e.touches[0].pageY - startY; 
-                updateTransform();
+                e.preventDefault(); translateX = e.touches[0].pageX - startX; translateY = e.touches[0].pageY - startY; updateTransform();
             } else if (e.touches.length === 2) {
-                // 雙指縮放中
                 e.preventDefault();
-                // 計算當前雙指距離
-                const dist = Math.hypot(
-                    e.touches[0].pageX - e.touches[1].pageX, 
-                    e.touches[0].pageY - e.touches[1].pageY
-                );
-                // 計算縮放增量 (乘上系數 0.01 調整靈敏度)
+                const dist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
                 const delta = (dist - initialDist) * 0.01;
-                // 限制縮放倍率在 1~4 倍之間
                 scale = Math.min(Math.max(1, scale + delta), 4);
-                initialDist = dist; // 更新基準距離
-                updateTransform();
+                initialDist = dist; updateTransform();
             }
         }, { passive: false });
 
-        container.addEventListener('touchend', () => { 
-            isDragging = false; 
-            container.classList.remove('grabbing');
-            initialDist = 0; 
-        });
+        container.addEventListener('touchend', () => { isDragging = false; container.classList.remove('grabbing'); initialDist = 0; });
 
-        // --- PC 滑鼠事件 (Ctrl+滾輪縮放 + 滑鼠拖曳) ---
-        container.addEventListener('wheel', (e) => {
-            if (e.ctrlKey || e.metaKey) {
-                e.preventDefault();
-                const delta = e.deltaY * -0.001;
-                scale = Math.min(Math.max(1, scale + delta), 4);
-                updateTransform();
+        // --- 全螢幕與排程 API ---
+        async function toggleFS(e) { 
+            e.stopPropagation(); 
+            const container = document.getElementById('video-container');
+            if (!document.fullscreenElement) {
+                try {
+                    if (container.requestFullscreen) await container.requestFullscreen();
+                    else if (container.webkitRequestFullscreen) await container.webkitRequestFullscreen();
+                    if (screen.orientation && screen.orientation.lock) {
+                        await screen.orientation.lock('landscape').catch(() => {});
+                    }
+                } catch (err) { console.error(err); }
+            } else {
+                if (document.exitFullscreen) document.exitFullscreen();
+                if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock();
+                scale = 1; updateTransform();
             }
-        }, { passive: false });
-
-        container.addEventListener('mousedown', (e) => {
-            if (scale > 1) {
-                isDragging = true;
-                container.classList.add('grabbing');
-                startX = e.pageX - translateX;
-                startY = e.pageY - translateY;
-            }
-        });
-
-        window.addEventListener('mousemove', (e) => {
-            if (isDragging && scale > 1) {
-                e.preventDefault();
-                translateX = e.pageX - startX;
-                translateY = e.pageY - startY;
-                updateTransform();
-            }
-        });
-
-        window.addEventListener('mouseup', () => {
-            isDragging = false;
-            container.classList.remove('grabbing');
-        });
-
-        // --- 原有排程管理與 API 邏輯 ---
-        const hourSelect = document.getElementById('new-hour');
-        for(let i=1; i<=12; i++) {
-            let h = i.toString().padStart(2, '0');
-            hourSelect.innerHTML += `<option value="${h}">${h}</option>`;
         }
 
-        document.querySelectorAll('.day-btn').forEach(btn => {
-            btn.addEventListener('click', () => btn.classList.toggle('active'));
-        });
+        const hourSelect = document.getElementById('new-hour');
+        for(let i=1; i<=12; i++) { hourSelect.innerHTML += `<option value="${i.toString().padStart(2, '0')}">${i.toString().padStart(2, '0')}</option>`; }
+
+        document.querySelectorAll('.day-btn').forEach(btn => btn.addEventListener('click', () => btn.classList.toggle('active')));
 
         async function loadConfig() {
             try {
@@ -289,8 +244,7 @@
             document.getElementById('main-icon-light').src = path;
             document.getElementById('main-text-light').innerText = isLightOn ? '關閉燈光' : '開啟燈光';
             const btn = document.getElementById('main-btn-light');
-            if(isLightOn) btn.classList.replace('bg-gray-800', 'bg-yellow-500'); 
-            else btn.classList.replace('bg-yellow-500', 'bg-gray-800');
+            if(isLightOn) btn.classList.replace('bg-gray-800', 'bg-yellow-500'); else btn.classList.replace('bg-yellow-500', 'bg-gray-800');
         }
 
         async function triggerFeed() {
@@ -300,33 +254,18 @@
             const mainText = document.getElementById('main-text-feed');
             const iconFeed = document.getElementById('icon-feed');
             const oldText = mainText.innerText;
-            mainText.innerText = '餵食中...';
-            iconFeed.innerText = '⏳';
-            mainBtn.disabled = true;
-            mainBtn.classList.replace('bg-red-600', 'bg-gray-400');
+            mainText.innerText = '餵食中...'; iconFeed.innerText = '⏳'; mainBtn.disabled = true; mainBtn.classList.replace('bg-red-600', 'bg-gray-400');
             try {
-                await fetch('/api/action', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({action: 'feed'})
-                });
+                await fetch('/api/action', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: 'feed'}) });
                 await loadConfig(); 
             } finally {
-                isFeeding = false; 
-                mainText.innerText = oldText;
-                iconFeed.innerText = '🍖';
-                mainBtn.disabled = false;
-                mainBtn.classList.replace('bg-gray-400', 'bg-red-600');
+                isFeeding = false; mainText.innerText = oldText; iconFeed.innerText = '🍖'; mainBtn.disabled = false; mainBtn.classList.replace('bg-gray-400', 'bg-red-600');
             }
         }
 
         async function toggleLight() {
             const current = config.device_status.light === "on" ? 'light_off' : 'light_on';
-            await fetch('/api/action', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({action: current})
-            });
+            await fetch('/api/action', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: current}) });
             await loadConfig();
         }
 
@@ -353,9 +292,7 @@
                             <input type="checkbox" ${item.enabled ? 'checked' : ''} onchange="toggleEnable(${item.id})" class="sr-only peer">
                             <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
                         </label>
-                        <button onclick="deleteItem(${item.id})" class="text-gray-300 hover:text-red-500 transition-colors">
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                        </button>
+                        <button onclick="deleteItem(${item.id})" class="text-gray-300 hover:text-red-500 transition-colors"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg></button>
                     </div>
                 </div>`;
             }).join('') || '<p class="text-center text-gray-400 py-10 opacity-50">尚無任何排程</p>';
@@ -377,68 +314,12 @@
             renderList();
         }
 
-        async function saveConfig() {
-            await fetch('/api/config', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(config)
-            });
-        }
-
-        function openManager(type) {
-            activeType = type;
-            document.getElementById('modal-title').innerText = type === 'auto_feed' ? '📅 餵食排程管理' : '💧 換水排程管理';
-            renderList();
-            document.getElementById('manager-modal').classList.remove('hidden');
-        }
-
-        function closeManager() {
-            document.getElementById('manager-modal').classList.add('hidden');
-            activeType = '';
-        }
-
-        async function toggleEnable(id) {
-            const item = config[activeType].find(i => i.id === id);
-            item.enabled = !item.enabled;
-            await saveConfig();
-            renderList();
-        }
-
-        async function deleteItem(id) {
-            config[activeType] = config[activeType].filter(i => i.id !== id);
-            await saveConfig();
-            renderList();
-        }
-
-        // --- 全螢幕與橫向鎖定功能 ---
-        async function toggleFS(e) { 
-            e.stopPropagation(); 
-            const container = document.getElementById('video-container');
-            
-            if (!document.fullscreenElement) {
-                try {
-                    if (container.requestFullscreen) await container.requestFullscreen();
-                    else if (container.webkitRequestFullscreen) await container.webkitRequestFullscreen();
-                    
-                    if (screen.orientation && screen.orientation.lock) {
-                        await screen.orientation.lock('landscape').catch(err => console.log("Lock denied"));
-                    }
-                } catch (err) { console.error(err); }
-            } else {
-                if (document.exitFullscreen) document.exitFullscreen();
-                if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock();
-                // 退出全螢幕時重設縮放
-                scale = 1; updateTransform();
-            }
-        }
-
-        // 監聽全螢幕變化 (處理 ESC 鍵退出)
-        document.addEventListener('fullscreenchange', () => {
-            if (!document.fullscreenElement) {
-                scale = 1; updateTransform();
-            }
-        });
-
+        async function saveConfig() { await fetch('/api/config', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(config) }); }
+        function openManager(type) { activeType = type; document.getElementById('modal-title').innerText = type === 'auto_feed' ? '📅 餵食排程管理' : '💧 換水排程管理'; renderList(); document.getElementById('manager-modal').classList.remove('hidden'); }
+        function closeManager() { document.getElementById('manager-modal').classList.add('hidden'); activeType = ''; }
+        async function toggleEnable(id) { const item = config[activeType].find(i => i.id === id); item.enabled = !item.enabled; await saveConfig(); renderList(); }
+        async function deleteItem(id) { config[activeType] = config[activeType].filter(i => i.id !== id); await saveConfig(); renderList(); }
+        
         loadConfig();
     </script>
 </body>
