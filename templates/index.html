@@ -82,8 +82,8 @@
         <div class="bg-white w-full max-w-xs rounded-2xl shadow-2xl p-6 text-center space-y-4">
             <img src="/static/resource/icon.png" class="w-20 h-20 mx-auto rounded-2xl shadow-lg">
             <h3 class="text-xl font-bold text-gray-800">安裝 FishTank Pro</h3>
-            <p class="text-gray-500 text-sm">將監控中心加入主畫面，享受全螢幕且更快速的智慧管理體驗！</p>
-            <div class="flex flex-col gap-2 pt-2">
+            <p id="pwa-text" class="text-gray-500 text-sm">將監控中心加入主畫面，享受全螢幕且更快速的智慧管理體驗！</p>
+            <div id="pwa-actions" class="flex flex-col gap-2 pt-2">
                 <button id="btn-pwa-install" class="bg-blue-600 text-white py-3 rounded-xl font-bold shadow-lg active:scale-95 transition-all">立即安裝</button>
                 <button onclick="closePwaModal()" class="text-gray-400 text-sm py-2">稍後再說</button>
             </div>
@@ -121,13 +121,13 @@
         let isFeeding = false;
         const dayNamesShort = ["日", "一", "二", "三", "四", "五", "六"];
 
-        // --- 影像縮放變量 ---
+        // --- 影像狀態量 ---
         let scale = 1, translateX = 0, translateY = 0;
         let isDragging = false, startX, startY, initialDist = 0;
         const container = document.getElementById('video-container');
         const videoImg = document.getElementById('video-stream');
 
-        // --- PWA 安裝邏輯 ---
+        // --- PWA 與 環境偵測 ---
         let deferredPrompt;
         const pwaModal = document.getElementById('pwa-modal');
         const installBtn = document.getElementById('btn-pwa-install');
@@ -139,13 +139,18 @@
         window.addEventListener('beforeinstallprompt', (e) => {
             e.preventDefault();
             deferredPrompt = e;
-            // 環境檢查：手機、非 PWA 模式、且沒被使用者關閉過
             const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
             const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
             const isDismissed = localStorage.getItem('pwa-prompt-dismissed') === 'true';
 
             if (isMobile && !isStandalone && !isDismissed) {
-                setTimeout(() => pwaModal.classList.remove('hidden'), 3000);
+                setTimeout(() => {
+                    pwaModal.classList.remove('hidden');
+                    if (/iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+                        installBtn.classList.add('hidden');
+                        document.getElementById('pwa-text').innerHTML = '請點擊瀏覽器底部的 <span class="font-bold text-blue-600">「分享」</span> 圖示，然後選擇 <span class="font-bold text-blue-600">「加入主畫面」</span>';
+                    }
+                }, 3000);
             }
         });
 
@@ -153,8 +158,7 @@
             if (!deferredPrompt) return;
             pwaModal.classList.add('hidden');
             deferredPrompt.prompt();
-            const { outcome } = await deferredPrompt.userChoice;
-            console.log(`User choice: ${outcome}`);
+            await deferredPrompt.userChoice;
             deferredPrompt = null;
         });
 
@@ -163,7 +167,7 @@
             localStorage.setItem('pwa-prompt-dismissed', 'true');
         }
 
-        // --- 影像變換 (支援邊界限制) ---
+        // --- 核心：影像操作邏輯 (含邊界限制) ---
         function updateTransform() {
             if (scale <= 1) { 
                 scale = 1; translateX = 0; translateY = 0; 
@@ -179,6 +183,31 @@
             videoImg.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scale})`;
         }
 
+        // 電腦滑鼠事件
+        container.addEventListener('wheel', (e) => {
+            if (e.ctrlKey || e.metaKey) {
+                e.preventDefault();
+                scale = Math.min(Math.max(1, scale + e.deltaY * -0.001), 4);
+                updateTransform();
+            }
+        }, { passive: false });
+
+        container.addEventListener('mousedown', (e) => {
+            if (scale > 1) {
+                isDragging = true; container.classList.add('grabbing');
+                startX = e.pageX - translateX; startY = e.pageY - translateY;
+            }
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            if (isDragging && scale > 1) {
+                translateX = e.pageX - startX; translateY = e.pageY - startY; updateTransform();
+            }
+        });
+
+        window.addEventListener('mouseup', () => { isDragging = false; container.classList.remove('grabbing'); });
+
+        // 手機觸控事件
         container.addEventListener('touchstart', (e) => {
             if (e.touches.length === 1 && scale > 1) {
                 isDragging = true; startX = e.touches[0].pageX - translateX; startY = e.touches[0].pageY - translateY;
@@ -194,38 +223,32 @@
             } else if (e.touches.length === 2) {
                 e.preventDefault();
                 const dist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
-                const delta = (dist - initialDist) * 0.01;
-                scale = Math.min(Math.max(1, scale + delta), 4);
+                scale = Math.min(Math.max(1, scale + (dist - initialDist) * 0.01), 4);
                 initialDist = dist; updateTransform();
             }
         }, { passive: false });
 
         container.addEventListener('touchend', () => { isDragging = false; container.classList.remove('grabbing'); initialDist = 0; });
 
-        // --- 全螢幕與排程 API ---
+        // --- 全螢幕功能 ---
         async function toggleFS(e) { 
             e.stopPropagation(); 
-            const container = document.getElementById('video-container');
             if (!document.fullscreenElement) {
                 try {
                     if (container.requestFullscreen) await container.requestFullscreen();
                     else if (container.webkitRequestFullscreen) await container.webkitRequestFullscreen();
-                    if (screen.orientation && screen.orientation.lock) {
-                        await screen.orientation.lock('landscape').catch(() => {});
-                    }
+                    if (screen.orientation && screen.orientation.lock) await screen.orientation.lock('landscape').catch(() => {});
                 } catch (err) { console.error(err); }
             } else {
                 if (document.exitFullscreen) document.exitFullscreen();
-                if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock();
                 scale = 1; updateTransform();
             }
         }
 
+        // --- 原有業務邏輯 ---
         const hourSelect = document.getElementById('new-hour');
         for(let i=1; i<=12; i++) { hourSelect.innerHTML += `<option value="${i.toString().padStart(2, '0')}">${i.toString().padStart(2, '0')}</option>`; }
-
         document.querySelectorAll('.day-btn').forEach(btn => btn.addEventListener('click', () => btn.classList.toggle('active')));
-
         async function loadConfig() {
             try {
                 const res = await fetch('/api/config');
@@ -234,7 +257,6 @@
                 if(activeType) renderList(); 
             } catch (e) { console.error(e); }
         }
-
         function updateStatusUI() {
             const status = config.device_status;
             document.getElementById('last-fed-time').innerText = status.last_fed || "無紀錄";
@@ -246,29 +268,23 @@
             const btn = document.getElementById('main-btn-light');
             if(isLightOn) btn.classList.replace('bg-gray-800', 'bg-yellow-500'); else btn.classList.replace('bg-yellow-500', 'bg-gray-800');
         }
-
         async function triggerFeed() {
             if (isFeeding) return;
             isFeeding = true;
             const mainBtn = document.getElementById('main-btn-feed');
-            const mainText = document.getElementById('main-text-feed');
-            const iconFeed = document.getElementById('icon-feed');
-            const oldText = mainText.innerText;
-            mainText.innerText = '餵食中...'; iconFeed.innerText = '⏳'; mainBtn.disabled = true; mainBtn.classList.replace('bg-red-600', 'bg-gray-400');
+            mainBtn.disabled = true; mainBtn.classList.replace('bg-red-600', 'bg-gray-400');
             try {
                 await fetch('/api/action', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: 'feed'}) });
                 await loadConfig(); 
             } finally {
-                isFeeding = false; mainText.innerText = oldText; iconFeed.innerText = '🍖'; mainBtn.disabled = false; mainBtn.classList.replace('bg-gray-400', 'bg-red-600');
+                isFeeding = false; mainBtn.disabled = false; mainBtn.classList.replace('bg-gray-400', 'bg-red-600');
             }
         }
-
         async function toggleLight() {
             const current = config.device_status.light === "on" ? 'light_off' : 'light_on';
             await fetch('/api/action', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: current}) });
             await loadConfig();
         }
-
         function renderList() {
             const list = document.getElementById('schedule-list');
             const items = config[activeType] || [];
@@ -297,7 +313,6 @@
                 </div>`;
             }).join('') || '<p class="text-center text-gray-400 py-10 opacity-50">尚無任何排程</p>';
         }
-
         async function addItem() {
             const ampm = document.getElementById('new-ampm').value;
             let h = parseInt(document.getElementById('new-hour').value);
@@ -307,19 +322,14 @@
             if (ampm === "PM" && h < 12) h += 12;
             if (ampm === "AM" && h === 12) h = 0;
             const time24 = `${h.toString().padStart(2, '0')}:${m}`;
-            const newItem = { id: Date.now(), time: time24, days: selectedDays, enabled: true };
-            config[activeType].push(newItem);
-            await saveConfig();
-            document.querySelectorAll('.day-btn').forEach(b => b.classList.remove('active'));
-            renderList();
+            config[activeType].push({ id: Date.now(), time: time24, days: selectedDays, enabled: true });
+            await saveConfig(); renderList();
         }
-
         async function saveConfig() { await fetch('/api/config', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(config) }); }
         function openManager(type) { activeType = type; document.getElementById('modal-title').innerText = type === 'auto_feed' ? '📅 餵食排程管理' : '💧 換水排程管理'; renderList(); document.getElementById('manager-modal').classList.remove('hidden'); }
         function closeManager() { document.getElementById('manager-modal').classList.add('hidden'); activeType = ''; }
         async function toggleEnable(id) { const item = config[activeType].find(i => i.id === id); item.enabled = !item.enabled; await saveConfig(); renderList(); }
         async function deleteItem(id) { config[activeType] = config[activeType].filter(i => i.id !== id); await saveConfig(); renderList(); }
-        
         loadConfig();
     </script>
 </body>
