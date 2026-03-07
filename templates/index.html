@@ -8,18 +8,21 @@
     <style>
         .sticky-video { position: sticky; top: 0; z-index: 40; background: #000; }
         #video-container { cursor: default; touch-action: none; user-select: none; background: #000; }
+        
+        /* 更改為 img 標籤樣式以接收 MJPEG 串流 */
         #video-stream { 
             width: 100%; height: 100%; object-fit: contain;
             transform-origin: center center;
             pointer-events: none; transition: transform 0.1s ease-out;
+            display: block;
         }
+        
         #video-container:fullscreen { width: 100vw; height: 100vh; display: flex; align-items: center; justify-content: center; }
         .zoom-active { cursor: grab !important; }
         .grabbing { cursor: grabbing !important; }
         .modal-bg { background-color: rgba(0, 0, 0, 0.7); z-index: 100; }
         .modal-content { z-index: 110; }
 
-        /* 星期按鈕：使用標準 CSS 避免編輯器警告 */
         .day-btn { 
             border: 1px solid #d1d5db; 
             border-radius: 0.5rem; 
@@ -40,9 +43,7 @@
 
     <div class="sticky-video shadow-lg">
         <div id="video-container" class="max-w-5xl mx-auto aspect-video relative overflow-hidden">
-            <video id="video-stream" autoplay loop muted playsinline>
-                <source src="/static/resource/demo.mp4" type="video/mp4">
-            </video>
+            <img id="video-stream" src="/video_feed" alt="Fish Tank Live Stream">
             
             <div id="fs-controls" class="absolute top-4 right-4 flex space-x-4 z-50" onclick="event.stopPropagation()">
                 <button onclick="triggerFeed()" class="text-3xl hover:scale-110 transition-transform">
@@ -98,12 +99,9 @@
                     <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                 </button>
             </div>
-            
             <div id="schedule-list" class="flex-1 overflow-y-auto p-5 space-y-4 bg-gray-50/50"></div>
-
             <div class="p-6 bg-white border-t border-gray-100 space-y-5 shadow-[0_-4px_10px_rgba(0,0,0,0.03)]">
                 <h3 class="text-sm font-semibold text-gray-700">新增自動排程</h3>
-                
                 <div class="grid grid-cols-7 gap-1 bg-gray-100 p-1 rounded-lg">
                     <button class="day-btn" data-day="1">一</button>
                     <button class="day-btn" data-day="2">二</button>
@@ -113,15 +111,13 @@
                     <button class="day-btn" data-day="6">六</button>
                     <button class="day-btn" data-day="0">日</button>
                 </div>
-                
                 <div class="flex items-center space-x-2">
                     <div class="flex-1 flex items-center bg-gray-50 border border-gray-200 rounded-xl px-2 py-1">
                         <select id="new-ampm" class="bg-transparent text-sm font-bold outline-none py-2 text-blue-600">
                             <option value="AM">AM</option>
                             <option value="PM">PM</option>
                         </select>
-                        <select id="new-hour" class="bg-transparent text-lg font-mono font-bold w-full outline-none py-2 text-gray-700 text-center">
-                            </select>
+                        <select id="new-hour" class="bg-transparent text-lg font-mono font-bold w-full outline-none py-2 text-gray-700 text-center"></select>
                         <span class="font-bold text-gray-400 mx-0.5">:</span>
                         <select id="new-minute" class="bg-transparent text-lg font-mono font-bold w-full outline-none py-2 text-gray-700 text-center">
                             <option value="00">00</option>
@@ -146,38 +142,33 @@
         let isFeeding = false;
         const dayNamesShort = ["日", "一", "二", "三", "四", "五", "六"];
 
-        // 1. 初始化 12 小時下拉選單 (01-12)
         const hourSelect = document.getElementById('new-hour');
         for(let i=1; i<=12; i++) {
             let h = i.toString().padStart(2, '0');
             hourSelect.innerHTML += `<option value="${h}">${h}</option>`;
         }
 
-        // 2. 星期按鈕切換
         document.querySelectorAll('.day-btn').forEach(btn => {
             btn.addEventListener('click', () => btn.classList.toggle('active'));
         });
 
-        // 3. API 功能
         async function loadConfig() {
             try {
                 const res = await fetch('/api/config');
                 config = await res.json();
                 updateStatusUI();
                 if(activeType) renderList(); 
-            } catch (e) { console.error("Config Error:", e); }
+            } catch (e) { console.error(e); }
         }
 
         function updateStatusUI() {
             const status = config.device_status;
             document.getElementById('last-fed-time').innerText = status.last_fed || "無紀錄";
-            
             const isLightOn = status.light === "on";
             const path = isLightOn ? '/static/resource/light_on.png' : '/static/resource/light_off.png';
             document.getElementById('icon-light').src = path;
             document.getElementById('main-icon-light').src = path;
             document.getElementById('main-text-light').innerText = isLightOn ? '關閉燈光' : '開啟燈光';
-            
             const btn = document.getElementById('main-btn-light');
             if(isLightOn) btn.classList.replace('bg-gray-800', 'bg-yellow-500'); 
             else btn.classList.replace('bg-yellow-500', 'bg-gray-800');
@@ -189,13 +180,11 @@
             const mainBtn = document.getElementById('main-btn-feed');
             const mainText = document.getElementById('main-text-feed');
             const iconFeed = document.getElementById('icon-feed');
-
             const oldText = mainText.innerText;
             mainText.innerText = '餵食中...';
             iconFeed.innerText = '⏳';
             mainBtn.disabled = true;
             mainBtn.classList.replace('bg-red-600', 'bg-gray-400');
-
             try {
                 await fetch('/api/action', {
                     method: 'POST',
@@ -222,29 +211,21 @@
             await loadConfig();
         }
 
-        // 4. 排程渲染 (顯示時將 24H 轉回 12H 以利閱讀)
         function renderList() {
             const list = document.getElementById('schedule-list');
             const items = config[activeType] || [];
-            
             list.innerHTML = items.map(item => {
                 const dayStr = item.days.sort().map(d => dayNamesShort[d]).join(' ');
-                
-                // 顯示轉換：24H -> 12H
                 let [h, m] = item.time.split(':');
                 h = parseInt(h);
                 const displayAMPM = h >= 12 ? 'PM' : 'AM';
                 const displayH = (h % 12 || 12).toString().padStart(2, '0');
-
-                return `
-                <div class="flex items-center justify-between p-4 bg-white rounded-2xl shadow-sm border border-gray-100">
+                return `<div class="flex items-center justify-between p-4 bg-white rounded-2xl shadow-sm border border-gray-100">
                     <div class="flex flex-col">
                         <div class="flex items-center space-x-2">
                             <span class="text-xs font-bold text-blue-600">${displayAMPM}</span>
                             <span class="text-2xl font-mono font-black text-gray-800">${displayH}:${m}</span>
-                            ${item.enabled ? 
-                                '<span class="bg-green-100 text-green-700 text-[10px] px-2 py-0.5 rounded-full font-bold">ON</span>' : 
-                                '<span class="bg-gray-200 text-gray-500 text-[10px] px-2 py-0.5 rounded-full font-bold">OFF</span>'}
+                            ${item.enabled ? '<span class="bg-green-100 text-green-700 text-[10px] px-2 py-0.5 rounded-full font-bold">ON</span>' : '<span class="bg-gray-200 text-gray-500 text-[10px] px-2 py-0.5 rounded-full font-bold">OFF</span>'}
                         </div>
                         <span class="text-xs font-semibold text-gray-400 mt-1">${item.days.length === 7 ? '每天' : '每週 ' + dayStr}</span>
                     </div>
@@ -261,34 +242,18 @@
             }).join('') || '<p class="text-center text-gray-400 py-10 opacity-50">尚無任何排程</p>';
         }
 
-        // 5. 新增排程 (12H 轉 24H 存入)
         async function addItem() {
             const ampm = document.getElementById('new-ampm').value;
             let h = parseInt(document.getElementById('new-hour').value);
             const m = document.getElementById('new-minute').value;
             const selectedDays = Array.from(document.querySelectorAll('.day-btn.active')).map(b => parseInt(b.dataset.day));
-            
-            if(selectedDays.length === 0) {
-                alert("請至少選擇一個重複星期");
-                return;
-            }
-
-            // 邏輯轉換：12H -> 24H
+            if(selectedDays.length === 0) return alert("請至少選擇一個重複星期");
             if (ampm === "PM" && h < 12) h += 12;
             if (ampm === "AM" && h === 12) h = 0;
             const time24 = `${h.toString().padStart(2, '0')}:${m}`;
-
-            const newItem = {
-                id: Date.now(),
-                time: time24,
-                days: selectedDays,
-                enabled: true
-            };
-            
+            const newItem = { id: Date.now(), time: time24, days: selectedDays, enabled: true };
             config[activeType].push(newItem);
             await saveConfig();
-            
-            // 重置
             document.querySelectorAll('.day-btn').forEach(b => b.classList.remove('active'));
             renderList();
         }
@@ -326,11 +291,38 @@
             renderList();
         }
 
-        function toggleFS(e) { 
+        // --- 修正的全螢幕與橫向鎖定功能 ---
+        async function toggleFS(e) { 
             e.stopPropagation(); 
             const container = document.getElementById('video-container');
-            if (!document.fullscreenElement) container.requestFullscreen(); 
-            else document.exitFullscreen(); 
+            
+            if (!document.fullscreenElement) {
+                try {
+                    // 1. 進入全螢幕
+                    if (container.requestFullscreen) {
+                        await container.requestFullscreen();
+                    } else if (container.webkitRequestFullscreen) {
+                        await container.webkitRequestFullscreen();
+                    }
+                    
+                    // 2. 嘗試鎖定橫向 (僅行動裝置支援，且需在全螢幕下)
+                    if (screen.orientation && screen.orientation.lock) {
+                        await screen.orientation.lock('landscape').catch(err => {
+                            console.log("橫向鎖定不被支援或被拒絕:", err);
+                        });
+                    }
+                } catch (err) {
+                    console.error("全螢幕切換失敗:", err);
+                }
+            } else {
+                if (document.exitFullscreen) {
+                    document.exitFullscreen();
+                }
+                // 解除橫向鎖定
+                if (screen.orientation && screen.orientation.unlock) {
+                    screen.orientation.unlock();
+                }
+            }
         }
 
         loadConfig();

@@ -1,13 +1,15 @@
 import json
 import os
 import threading
+import time
 from datetime import datetime, timedelta
-from flask import Flask, render_template, request, jsonify, redirect, url_for, flash
+from flask import Flask, render_template, request, jsonify, redirect, url_for, flash, Response
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user
 from werkzeug.security import check_password_hash
 from flask_apscheduler import APScheduler
-from apscheduler.triggers.cron import CronTrigger  # 新增：用於精確對齊時間
+from apscheduler.triggers.cron import CronTrigger
 from hardware.motor_ctrl import FishFeeder
+from hardware.camera_ctrl import FishCamera # 引入新模組
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'fish-tank-secret-key-99b3awiet456qr4ojy@@##%&*%KGrkyorlwerk84*/*+59+r5*8giJ*J($)#' 
@@ -16,8 +18,9 @@ CONFIG_FILE = 'config.json'
 SECRET_FILE = 'config_secret.json'
 BAN_FILE = 'banned_ips.json'
 
-# 初始化硬體與排程器
+# 初始化硬體、排程器與鏡頭
 feeder = FishFeeder()
+fish_cam = FishCamera() # 自動掃描可用裝置
 scheduler = APScheduler()
 file_lock = threading.Lock()
 
@@ -70,39 +73,32 @@ def is_ip_banned(ip):
 
 # --- 排程背景任務 ---
 def check_schedule():
-    """執行排程檢查：支援自動 Cron 觸發與手動存檔後觸發"""
     with app.app_context():
         with file_lock:
             config = read_json(CONFIG_FILE)
         
         now = datetime.now()
-        # 取得精確時間字串，例如 "03:20"
         now_time = now.strftime("%H:%M")
         now_day = int(now.strftime("%w"))
         
-        # 1. 檢查自動餵食
         schedules = config.get('auto_feed', [])
         for item in schedules:
             if item.get('enabled') and item.get('time') == now_time:
                 if now_day in item.get('days', []):
-                    # feed_sequence 內部有 is_busy 鎖，避免重複執行
                     if feeder.feed_sequence():
                         print(f"[{now.strftime('%H:%M:%S')}] 執行餵食成功")
                         safe_update_config(lambda cfg: {
                             **cfg, 
                             "device_status": {**cfg["device_status"], "last_fed": now.strftime("%Y-%m-%d %H:%M")}
                         })
-                    break # 同一分鐘內只需觸發一個符合的排程
+                    break
 
-        # 2. 檢查自動換水 (預留區)
         water_schedules = config.get('auto_water_change', [])
         for item in water_schedules:
             if item.get('enabled') and item.get('time') == now_time:
                 if now_day in item.get('days', []):
                     print(f"[{now_time}] 觸發自動換水排程 (待實作)")
 
-# 設定排程器：使用 CronTrigger 咬死整 10 分鐘
-# 不論何時啟動，都會在下一個 00, 10, 20, 30, 40, 50 分執行
 scheduler.add_job(
     id='feeder_cron_job', 
     func=check_schedule, 
@@ -110,6 +106,19 @@ scheduler.add_job(
 )
 scheduler.init_app(app)
 scheduler.start()
+
+# --- 影像串流產生器 ---
+def gen_frames():
+    """持續從鏡頭抓取影像並封裝成 MJPEG 格式"""
+    while True:
+        frame = fish_cam.get_frame()
+        if frame is None:
+            time.sleep(0.1) # 避免無效循環過快消耗 CPU
+            continue
+        
+        # 依照 MJPEG 標準封裝圖片
+        yield (b'--frame\r\n'
+               b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n\r\n')
 
 # --- 登入管理 ---
 login_manager = LoginManager()
@@ -125,7 +134,6 @@ def load_user(user_id):
     if user_id in secrets.get('users', {}): return User(user_id)
     return None
 
-# 初始化設定檔結構
 if not os.path.exists(CONFIG_FILE):
     default_config = {
         "auto_feed": [],
@@ -180,6 +188,13 @@ def logout():
 def index():
     return render_template('index.html')
 
+@app.route('/video_feed')
+@login_required
+def video_feed():
+    """影像串流路徑：瀏覽器會將此 URL 視為不斷更新的圖片"""
+    return Response(gen_frames(),
+                    mimetype='multipart/x-mixed-replace; boundary=frame')
+
 @app.route('/api/config', methods=['GET'])
 @login_required
 def get_config():
@@ -191,18 +206,14 @@ def get_config():
 def update_config():
     with file_lock:
         write_json(CONFIG_FILE, request.json)
-    
-    # 存檔立即生效：呼叫函式進行一次性檢查，不會產生多餘排程任務
     if not feeder.is_busy:
         check_schedule()
-        
     return jsonify({"status": "success"})
 
 @app.route('/api/action', methods=['POST'])
 @login_required
 def trigger_action():
     action = request.json.get('action')
-    
     if action == 'feed':
         success = feeder.feed_sequence()
         if success:
@@ -211,7 +222,6 @@ def trigger_action():
                 "device_status": {**cfg["device_status"], "last_fed": datetime.now().strftime("%Y-%m-%d %H:%M")}
             })
         return jsonify({"status": "success" if success else "busy"})
-    
     elif action in ['light_on', 'light_off']:
         new_status = "on" if action == 'light_on' else "off"
         safe_update_config(lambda cfg: {
@@ -219,9 +229,8 @@ def trigger_action():
             "device_status": {**cfg["device_status"], "light": new_status}
         })
         return jsonify({"status": "success"})
-        
     return jsonify({"status": "received"})
 
 if __name__ == '__main__':
-    # 注意：debug=False 在生產環境中能確保排程器只啟動一次
-    app.run(host='0.0.0.0', port=5080, debug=False)
+    # 確保 threaded=True 以支援同時瀏覽影像與操作 API
+    app.run(host='0.0.0.0', port=5080, debug=False, threaded=True)
