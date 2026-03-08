@@ -9,7 +9,7 @@ from werkzeug.security import check_password_hash
 from flask_apscheduler import APScheduler
 from apscheduler.triggers.cron import CronTrigger
 from hardware.motor_ctrl import FishFeeder
-from hardware.camera_ctrl import FishCamera # 引入新模組
+from hardware.camera_ctrl import FishCamera
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'fish-tank-secret-key-99b3awiet456qr4ojy@@##%&*%KGrkyorlwerk84*/*+59+r5*8giJ*J($)#' 
@@ -18,11 +18,39 @@ CONFIG_FILE = 'config.json'
 SECRET_FILE = 'config_secret.json'
 BAN_FILE = 'banned_ips.json'
 
-# 初始化硬體、排程器與鏡頭
-feeder = FishFeeder()
-fish_cam = FishCamera() # 自動掃描可用裝置
+# --- 1. 初始化雙餵食器與鏡頭 ---
+# 餵食器 A (原本腳位)
+feeder_a = FishFeeder(pins=[17, 18, 27, 22])
+# 餵食器 B (新腳位，請根據實體接線修改)
+feeder_b = FishFeeder(pins=[23, 24, 25, 8])
+
+fish_cam = FishCamera() 
 scheduler = APScheduler()
 file_lock = threading.Lock()
+
+# --- 2. 輔助函式：同步餵食邏輯 ---
+def perform_dual_feed():
+    """使用執行緒讓兩台餵食器同時啟動"""
+    # 檢查是否任一馬達正在忙碌
+    if feeder_a.is_busy or feeder_b.is_busy:
+        return False
+    
+    # 定義內部執行函式
+    def thread_feed(f): f.feed_sequence()
+    
+    # 建立並啟動執行緒
+    t1 = threading.Thread(target=thread_feed, args=(feeder_a,))
+    t2 = threading.Thread(target=thread_feed, args=(feeder_b,))
+    t1.start()
+    t2.start()
+    
+    # 更新最後餵食時間紀錄
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+    safe_update_config(lambda cfg: {
+        **cfg, 
+        "device_status": {**cfg["device_status"], "last_fed": now_str}
+    })
+    return True
 
 # --- 基礎檔案處理 ---
 def read_json(filename):
@@ -85,12 +113,9 @@ def check_schedule():
         for item in schedules:
             if item.get('enabled') and item.get('time') == now_time:
                 if now_day in item.get('days', []):
-                    if feeder.feed_sequence():
-                        print(f"[{now.strftime('%H:%M:%S')}] 執行餵食成功")
-                        safe_update_config(lambda cfg: {
-                            **cfg, 
-                            "device_status": {**cfg["device_status"], "last_fed": now.strftime("%Y-%m-%d %H:%M")}
-                        })
+                    # 修改：呼叫同步餵食函式
+                    if perform_dual_feed():
+                        print(f"[{now.strftime('%H:%M:%S')}] 自動雙投餵執行成功")
                     break
 
         water_schedules = config.get('auto_water_change', [])
@@ -109,14 +134,11 @@ scheduler.start()
 
 # --- 影像串流產生器 ---
 def gen_frames():
-    """持續從鏡頭抓取影像並封裝成 MJPEG 格式"""
     while True:
         frame = fish_cam.get_frame()
         if frame is None:
-            time.sleep(0.1) # 避免無效循環過快消耗 CPU
+            time.sleep(0.1)
             continue
-        
-        # 依照 MJPEG 標準封裝圖片
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n\r\n')
 
@@ -191,7 +213,6 @@ def index():
 @app.route('/video_feed')
 @login_required
 def video_feed():
-    """影像串流路徑：瀏覽器會將此 URL 視為不斷更新的圖片"""
     return Response(gen_frames(),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
 
@@ -206,7 +227,8 @@ def get_config():
 def update_config():
     with file_lock:
         write_json(CONFIG_FILE, request.json)
-    if not feeder.is_busy:
+    # 修改：不忙碌時檢查排程，確保兩台都沒在忙
+    if not feeder_a.is_busy and not feeder_b.is_busy:
         check_schedule()
     return jsonify({"status": "success"})
 
@@ -215,12 +237,8 @@ def update_config():
 def trigger_action():
     action = request.json.get('action')
     if action == 'feed':
-        success = feeder.feed_sequence()
-        if success:
-            safe_update_config(lambda cfg: {
-                **cfg, 
-                "device_status": {**cfg["device_status"], "last_fed": datetime.now().strftime("%Y-%m-%d %H:%M")}
-            })
+        # 修改：呼叫同步餵食函式
+        success = perform_dual_feed()
         return jsonify({"status": "success" if success else "busy"})
     elif action in ['light_on', 'light_off']:
         new_status = "on" if action == 'light_on' else "off"
@@ -232,5 +250,4 @@ def trigger_action():
     return jsonify({"status": "received"})
 
 if __name__ == '__main__':
-    # 確保 threaded=True 以支援同時瀏覽影像與操作 API
     app.run(host='0.0.0.0', port=5080, debug=False, threaded=True)
