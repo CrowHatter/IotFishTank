@@ -1,100 +1,157 @@
-
 # Smart-Aquarium-Pi (智慧魚缸監控系統) 🐟
 
-![Status](https://img.shields.io/badge/Status-In--Development-yellow)
-![Security](https://img.shields.io/badge/Security-Flask--Login%20%2B%20Rate%20Limit-green)
+![Status](https://img.shields.io/badge/Status-Beta-orange)
+![Security](https://img.shields.io/badge/Security-HTTPS%20%2B%20PWA-blue)
+![Network](https://img.shields.io/badge/Network-NAS%20Reverse%20Proxy-green)
+![Deployment](https://img.shields.io/badge/Deployment-Gunicorn%20(gthread)%20%2B%20systemd-red)
 
-這是一個基於 **Raspberry Pi** 的全方位魚缸管理解決方案。透過 **DDNS** 實現遠端訪問，並整合 **階梯式 IP 封鎖機制** 與 **Scrypt 密碼雜湊**，確保你的魚缸管理既直觀又安全。
+這是一個基於 **Raspberry Pi 5** 的全方位魚缸管理解決方案。透過 **NAS 反向代理 (Reverse Proxy)** 與 **Let's Encrypt SSL** 實現安全的遠端 HTTPS 訪問，並提供完整的 **PWA (Progressive Web App)** 行動端體驗。
 
 ---
 
 ## 🌟 核心功能 (Features)
 
-* **即時串流 (Live Stream)：** 透過 Flask 與 OpenCV 實現低延遲的 USB 鏡頭影像傳輸 (MJPEG)。
+* **即時串流與操作 (Live Stream & UI)：**
+    * 透過 Flask 與 OpenCV 實現低延遲的 MJPEG 影像串流 (Image Streaming)。
+    * **全平台縮放系統：** 支援行動端 **雙指撥弄縮放 (Pinch Zoom)** 與 PC 端 **Ctrl + 滾輪縮放**。
+    * **智慧邊界限制：** 實作邊界演算法防止影像放大後拖曳超出黑框。
+* **PWA 行動端優化 (Mobile Experience)：**
+    * **應用程式化：** 支援「加入主畫面」，提供無網址列的沈浸式全螢幕體驗。
+    * **智慧安裝導引：** 自動偵測環境，針對 Android 彈出安裝視窗，針對 iOS 提供分享導引。
+    * **橫向鎖定 (Landscape Lock)：** 全螢幕模式下自動請求橫屏顯示，優化 16:9 監視視野。
 * **多層級安全防護 (Security)：**
-    * **驗證系統：** 使用 `Flask-Login` 搭配 `Scrypt` 雜湊演算法保護管理員帳密。
-    * **動態封鎖：** 實作階梯式 IP 限制（1 分鐘內錯 5 次鎖 1 分鐘、10 次鎖 10 分鐘、15 次永久封鎖）。
-    * **資料分離：** 敏感憑證存於 `config_secret.json`，一般排程存於 `config.json`，封鎖紀錄存於 `banned_ips.json`。
+    * **HTTPS 加密：** 整合 Synology NAS 反向代理與 SSL 憑證，確保外部存取安全性。
+    * **驗證系統：** 使用 `Flask-Login` 搭配 `Scrypt` 保護管理員帳密。
+    * **動態封鎖：** 實作階梯式 IP 限制機制（持久化存儲於 `banned_ips.json`）。
 * **自動化排程 (Automation)：**
-    * **28BYJ-48 步進馬達** 控制的精準自動餵食系統。
-    * 基於 `config.json` 的自動換水與燈光排程管理 (CRUD)。
-* **響應式儀表板 (RWD Dashboard)：** 支援行動端 **全螢幕自動橫向旋轉 (Landscape Lock)** 與 **雙指撥弄縮放 (Pinch Zoom)**。
+    * 支援 **28BYJ-48 步進馬達** 控制的精準自動餵食。
+    * 視覺化排程管理介面 (CRUD)，支援燈光與換水自動化。
 
 ---
 
-## 🛠️ 硬體與網路清單 (Hardware & Network)
+## 🛠️ 硬體與網路架構 (Hardware & Network)
 
 | 類別 | 項目 | 備註 |
 | :--- | :--- | :--- |
-| **控制核心** | Raspberry Pi 4B / 5 | 建議 4GB RAM 以上以跑影像識別 |
-| **影像擷取** | USB 網路攝影機 / Pi Camera | 用於即時監控與 AI 偵測 |
-| **動力系統** | 28BYJ-48 步進馬達 + ULN2003 | 用於自動餵食器 (Stepper Motor) |
-| **環境感測** | DS18B20 防水溫度感測器 | 監控水溫 (Water Temperature Sensor) |
-| **網路連接** | DDNS (Dynamic DNS) | 搭配路由器 Port Forwarding (Port 5080) |
+| **控制核心** | Raspberry Pi 5 | 使用專屬虛擬環境 `.venv` 執行 |
+| **服務引擎** | Gunicorn (gthread) | 採用線程模式 (Threads) 以相容硬體控制 |
+| **影像擷取** | USB 網路攝影機 | 自動掃描 `/dev/video*` 裝置 |
+| **動力系統** | 28BYJ-48 + ULN2003 | 用於自動餵食器 (Stepper Motor) |
+| **外部訪問** | Synology Reverse Proxy | 透過 Port 5081 (HTTPS) 轉發至 5080 (HTTP) |
+| **安全憑證** | Let's Encrypt SSL | PWA 運作之必要條件 |
 
 ---
 
 ## 📂 專案架構 (Project Structure)
 
 ```bash
-├── app.py              # Flask 後端主程式 (含 Auth 與 Rate Limit 邏輯)
-├── config.json         # 一般自動化排程配置文件
-├── config_secret.json  # 敏感帳號密碼雜湊檔 (不應上傳至 Git)
-├── banned_ips.json     # 惡意 IP 封鎖名單 (持久化存儲)
+├── app.py              # Flask 後端主程式 (鏡頭串流、API、安全邏輯)
+├── config.json         # 自動化排程配置文件
+├── config_secret.json  # 敏感帳號密碼雜湊檔
+├── banned_ips.json     # 惡意 IP 封鎖名單 (Persistent Ban List)
+├── requirements.txt    # 虛擬環境所需依賴
+├── .venv/              # Python 虛擬環境 (Virtual Environment)
 ├── templates/
-│   ├── index.html      # 主監控介面 (支援手機全螢幕旋轉/縮放)
-│   └── login.html      # 安全登入介面 (含錯誤閃爍提示)
+│   ├── index.html      # 主介面 (含 PWA 導引、縮放拖曳、Banner)
+│   └── login.html      # 安全登入介面
 └── static/
-    └── resource/       # 靜態資源 (圖示、Demo 影片)
+    ├── sw.js           # PWA Service Worker (離線支援基礎)
+    ├── manifest.json   # PWA 應用定義檔 (圖示、顏色、啟動模式)
+    └── resource/
+        └── icon.png    # 1024x1024 高解析度應用圖標
 ```
 
 ---
 
 ## 🚀 快速上手 (Quick Start)
 
-### 1. 環境設定
+### 1. 進入虛擬環境並安裝
 ```bash
-# 安裝依賴套件
-pip install flask flask-login opencv-python RPi.GPIO
+cd ~/Desktop/IotFishTank
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
-### 2. 初始安全設定
-請先手動產生密碼雜湊並填入 `config_secret.json`：
-```python
-from werkzeug.security import generate_password_hash
-# 將產出的字串填入 config_secret.json 的 users 欄位中
-print(generate_password_hash("你的管理員密碼"))
+### 2. 測試服務啟動
+使用 Gunicorn 配合 **gthread** 於 5080 Port 啟動：
+```bash
+gunicorn --worker-class gthread --threads 15 --bind 0.0.0.0:5080 app:app
 ```
 
-### 3. 執行程式
+---
+
+## ⚙️ 自動化部署 (Automatic Deployment)
+
+為確保樹莓派重啟後（未登入前）自動運行服務，本專案採用 **systemd** 管理。
+
+### 1. 建立 Service 檔案
 ```bash
-python app.py
+sudo nano /etc/systemd/system/fishtank.service
 ```
-造訪 `http://<your-ddns-domain>:5080` 即可進入登入頁面。
+
+### 2. 貼入以下配置
+```ini
+[Unit]
+Description=Gunicorn gthread service for IoT Fish Tank
+After=network.target
+
+[Service]
+User=ericweng
+Group=www-data
+WorkingDirectory=/home/ericweng/Desktop/IotFishTank
+Environment="PATH=/home/ericweng/Desktop/IotFishTank/.venv/bin"
+
+# 使用 gthread 模式，確保對底層硬體驅動 (GPIO/USB) 的相容性
+ExecStart=/home/ericweng/Desktop/IotFishTank/.venv/bin/gunicorn \
+    --worker-class gthread \
+    --workers 1 \
+    --threads 15 \
+    --timeout 0 \
+    --keep-alive 5 \
+    --preload \
+    --bind 0.0.0.0:5080 \
+    app:app
+
+# 核心需求：即使沒登入也會自動開啟，崩潰自動重啟
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### 3. 啟用服務
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable fishtank.service
+sudo systemctl start fishtank.service
+```
 
 ---
 
 ## 📺 操作亮點 (UX Highlights)
 
-* **Mobile Optimized：** 手機全螢幕模式下自動請求 **Landscape (橫向)** 顯示，避免 16:9 畫面左右裁切。
-* **Pinch-to-Zoom：** 實作觸控事件監聽，支援行動端雙指縮放影片細節，解決全螢幕下原本無法縮放的問題。
-* **Safety Lock：** 修正了全螢幕切換與按鈕點擊之間的事件冒泡 (Event Bubbling) 問題。
+* **Boundary Guard：** 實作影像位移限制演算法 $translateX = Math.min(Math.max(translateX, -maxW), maxW)$，確保放大縮放時不露底。
+* **PWA Smart Prompt：** 自動判定 `display-mode: standalone`，已安裝用戶不重複彈出下載提示。
+* **App Banner：** 頂部整合動態連線狀態燈與高質感 Icon，提升應用專業度。
 
 ---
 
 ## 📝 待辦清單 (Todo List)
 
-- [x] 完成 RWD 前端介面與全螢幕旋轉/縮放
-- [x] 實作 `Flask-Login` 驗證與 `Scrypt` 雜湊
-- [x] 開發階梯式 IP 封鎖機制 (Persistent Ban List)
-- [ ] 整合 OpenCV USB 鏡頭即時串流 (正式取代 Demo 影片)
-- [ ] 完成 28BYJ-48 步進馬達 GPIO 餵食控制
-- [ ] 實作 OpenCV 魚隻跳躍偵測 (Motion Detection)
+- [x] 完成 PWA 封裝與 HTTPS 反向代理設定
+- [x] 實作全平台 (觸控/滑鼠) 影像縮放與防超界拖曳
+- [x] 整合正式鏡頭串流 (MJPEG Stream)
+- [x] 實作 Gunicorn + systemd 自動化部署 (開機自啟動)
+- [x] 採用 gthread 模型優化硬體併發存取
+- [ ] 實作 OpenCV 魚隻偵測 (Object Detection)
+- [ ] 增加環境光感應自動補光功能
 
 ---
 
 ### 💡 技術觀念 (Knowledge Base)
 
-* **ISO 8601 Format：** 封鎖時間採用 ISO 格式存儲於 JSON，確保跨系統的時間解析準確性。
-* **Memory-Hard Hashing：** 使用 `scrypt` 演算法大幅提高暴力破解的成本。
-* **Least Privilege：** 建議以非 Root 使用者執行 Flask，並僅開放必要之單一埠口 (5080) 以降低風險。
+* **Gunicorn (gthread)：** 採用作業系統級別的線程 (**pthreads**) 處理併發。相較於非同步協程 (Coroutines)，線程模式在調用 C 擴展庫（如 OpenCV）或操作 GPIO 驅動時具備更佳的穩定性與預測性。
+* **Reverse Proxy (反向代理)：** 由 NAS 處理 SSL 加密。由於 PWA 嚴格要求 **Secure Context** (HTTPS)，此架構是讓樹莓派在內網運行 HTTP 但外網享有 PWA 功能的最佳解。
+* **Service Lifecycle：** 透過 `systemd` 的 `multi-user.target` 級別，確保服務在系統完成網路初始化後即刻啟動，無需人工登入 GUI 介面。
