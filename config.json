@@ -1,13 +1,13 @@
 {
     "auto_feed": [
         {
-            "id": 1772858558358,
-            "time": "19:00",
             "days": [
                 2,
                 4
             ],
-            "enabled": true
+            "enabled": true,
+            "id": 1772858558358,
+            "time": "19:00"
         }
     ],
     "auto_water_change": [
@@ -21,7 +21,7 @@
         }
     ],
     "device_status": {
-        "last_fed": "2026-03-07 12:42",
+        "last_fed": "2026-03-08 21:59",
         "light": "off"
     }
 }
