@@ -130,13 +130,7 @@ sudo systemctl start fishtank.service
 
 ---
 
-## 📺 操作亮點 (UX Highlights)
 
-* **Boundary Guard：** 實作影像位移限制演算法 $translateX = Math.min(Math.max(translateX, -maxW), maxW)$，確保放大縮放時不露底。
-* **PWA Smart Prompt：** 自動判定 `display-mode: standalone`，已安裝用戶不重複彈出下載提示。
-* **App Banner：** 頂部整合動態連線狀態燈與高質感 Icon，提升應用專業度。
-
----
 
 ## 📝 待辦清單 (Todo List)
 
