@@ -35,9 +35,9 @@ class FishFeeder:
             
         try:
             self.is_busy = True 
-            self.rotate(1/72, 1)   # 順時針撥動
+            self.rotate(1/72, -1)   # 順時針撥動
             time.sleep(0.5)
-            self.rotate(1/2, -1)   # 逆時針回彈（註：原本寫 1 圈可能太久，建議根據容器大小調整）
+            self.rotate(1/2, 1)   # 逆時針回彈（註：原本寫 1 圈可能太久，建議根據容器大小調整）
             return True
         finally:
             self.stop()
