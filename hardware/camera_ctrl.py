@@ -1,75 +1,51 @@
 import cv2
-import threading
 import time
 
 class FishCamera:
-    def __init__(self, max_index=5):
-        """
-        初始化鏡頭並自動掃描可用裝置
-        :param max_index: 掃描從 /dev/video0 到 /dev/videoX 的索引上限
-        """
+    def __init__(self):
         self.cap = None
-        self.lock = threading.Lock() # 確保多執行緒讀取影像時不會發生衝突
-        self.active_index = -1
-        
-        print("--- [Camera] 開始掃描可用鏡頭裝置 ---")
-        
-        for i in range(max_index + 1):
-            # 嘗試開啟索引為 i 的鏡頭
-            temp_cap = cv2.VideoCapture(i)
-            
-            if temp_cap.isOpened():
-                # 關鍵：必須嘗試讀取一幀以確認硬體真的有影像輸出 (非空殼裝置)
-                ret, frame = temp_cap.read()
-                if ret:
-                    self.cap = temp_cap
-                    self.active_index = i
-                    print(f"--- [Camera] 成功找到鏡頭！使用裝置索引: {i} ---")
-                    break
-                else:
-                    temp_cap.release()
-            else:
-                temp_cap.release()
+        self.discover_camera()
 
-        if self.cap is None:
-            print("--- [Camera] 警告：未發現任何可用的鏡頭裝置。 ---")
-        else:
-            # 1. 設定解析度 (樹莓派建議 640x480 或 800x600 以維持順暢)
-            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    def discover_camera(self):
+        # 根據 v4l2-ctl 結果，優先嘗試索引 1
+        target_indices = [1, 2, 0] 
+        
+        for index in target_indices:
+            print(f"--- [Camera] 嘗試開啟裝置 /dev/video{index} ---")
+            # 強制使用 V4L2 後端
+            self.cap = cv2.VideoCapture(index, cv2.CAP_V4L2)
             
-            # 2. 嘗試限制 FPS (硬體端減少負擔)
-            self.cap.set(cv2.CAP_PROP_FPS, 20)
+            if self.cap.isOpened():
+                # 1. 強制設定為 MJPG 格式 (這是這顆鏡頭流暢的關鍵)
+                self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+                
+                # 2. 設定解析度為 720p (兼顧頻寬與網頁比例)
+                self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+                self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+                
+                # 3. 緩衝區設定 (減少延遲)
+                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+                # 4. 驗證是否真的有畫面
+                ret, frame = self.cap.read()
+                if ret:
+                    print(f"--- [Camera] 成功在 /dev/video{index} 獲取畫面！ ---")
+                    return
+                else:
+                    print(f"--- [Camera] 裝置 /dev/video{index} 已開啟但讀取幀失敗 ---")
+                    self.cap.release()
             
-            # 3. 關閉緩衝區 (確保影像為「最即時」而非「最流暢」)
-            # 這能有效防止 MJPEG 串流累積延遲
-            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        print("--- [Camera] 錯誤：所有鏡頭裝置皆無法獲取影像 ---")
 
     def get_frame(self):
-        """
-        抓取當前畫面並轉換為 JPEG 位元組
-        """
-        if self.cap is None or not self.cap.isOpened():
-            return None
-            
-        with self.lock:
-            success, frame = self.cap.read()
-            if not success:
-                return None
-            
-            # 將 OpenCV 矩陣 BGR 轉換為 JPEG 位元組
-            # [cv2.IMWRITE_JPEG_QUALITY, 75] 可在頻寬與品質間取得平衡
-            ret, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
-            
-            if not ret:
-                return None
-            
-            return jpeg.tobytes()
+        if self.cap and self.cap.isOpened():
+            ret, frame = self.cap.read()
+            if ret:
+                # 2K 鏡頭原始畫面較大，編碼時維持 80% 品質以平衡傳輸速度
+                _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                return buffer.tobytes()
+        return None
 
     def __del__(self):
-        """
-        物件銷毀時釋放資源
-        """
-        if self.cap and self.cap.isOpened():
+        if self.cap:
             self.cap.release()
-            print("--- [Camera] 鏡頭資源已成功釋放 ---")
