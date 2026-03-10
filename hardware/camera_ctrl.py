@@ -7,43 +7,50 @@ class FishCamera:
         self.discover_camera()
 
     def discover_camera(self):
-        # 根據 v4l2-ctl 結果，優先嘗試索引 1
+        # 根據 v4l2-ctl，優先鎖定索引 1
         target_indices = [1, 2, 0] 
         
         for index in target_indices:
-            print(f"--- [Camera] 嘗試開啟裝置 /dev/video{index} ---")
-            # 強制使用 V4L2 後端
+            print(f"--- [Camera] 嘗試開啟 /dev/video{index} ---")
             self.cap = cv2.VideoCapture(index, cv2.CAP_V4L2)
             
             if self.cap.isOpened():
-                # 1. 強制設定為 MJPG 格式 (這是這顆鏡頭流暢的關鍵)
+                # 關鍵設定：MJPG 格式
                 self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-                
-                # 2. 設定解析度為 720p (兼顧頻寬與網頁比例)
+                # 設為 720p 確保流暢
                 self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
                 self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-                
-                # 3. 緩衝區設定 (減少延遲)
                 self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
-                # 4. 驗證是否真的有畫面
+                # --- 修正點：給予鏡頭暖機時間 ---
+                print("--- [Camera] 等待硬體穩定中... ---")
+                time.sleep(1.5) 
+                
+                # 暖機：讀取 5 幀丟掉，確保緩衝區充滿正確的 MJPEG 封包
+                for _ in range(5):
+                    self.cap.read()
+
+                # 最後驗證
                 ret, frame = self.cap.read()
-                if ret:
-                    print(f"--- [Camera] 成功在 /dev/video{index} 獲取畫面！ ---")
+                if ret and frame is not None and frame.size > 0:
+                    print(f"--- [Camera] 成功在 /dev/video{index} 獲取有效畫面！ ---")
                     return
                 else:
-                    print(f"--- [Camera] 裝置 /dev/video{index} 已開啟但讀取幀失敗 ---")
+                    print(f"--- [Camera] /dev/video{index} 讀取失敗或畫面為空 ---")
                     self.cap.release()
             
-        print("--- [Camera] 錯誤：所有鏡頭裝置皆無法獲取影像 ---")
+        print("--- [Camera] 嚴重錯誤：無法獲取任何有效影像 ---")
 
     def get_frame(self):
         if self.cap and self.cap.isOpened():
-            ret, frame = self.cap.read()
-            if ret:
-                # 2K 鏡頭原始畫面較大，編碼時維持 80% 品質以平衡傳輸速度
-                _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
-                return buffer.tobytes()
+            try:
+                ret, frame = self.cap.read()
+                if ret and frame is not None:
+                    # 降低品質至 70% 減少外網傳輸壓力
+                    _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                    return buffer.tobytes()
+            except Exception as e:
+                print(f"--- [Camera] 讀取幀異常: {e} ---")
         return None
 
     def __del__(self):
