@@ -72,9 +72,17 @@
             <img id="video-stream" src="/video_feed" alt="Fish Tank Live Stream">
             
             <div id="fs-controls" class="absolute top-4 right-4 flex space-x-4 z-50" onclick="event.stopPropagation()">
-                <button onclick="triggerFeed()" class="text-3xl hover:scale-110 transition-transform">
-                    <span id="icon-feed">🍖</span>
-                </button>
+                <!-- 放大畫面餵食：點擊後出現下拉選單 -->
+                <div id="fs-feed-container" class="relative">
+                    <button onclick="toggleFeedDropdown(event)" class="text-3xl hover:scale-110 transition-transform select-none">
+                        <span id="icon-feed">🍖</span>
+                    </button>
+                    <div id="feed-dropdown" class="hidden absolute top-full right-0 mt-2 bg-black/80 backdrop-blur-sm rounded-xl overflow-hidden text-white text-sm shadow-xl min-w-[5.5rem]">
+                        <button onclick="selectFeed(event,'A')"    class="flex items-center gap-2 w-full px-4 py-2.5 hover:bg-white/20 active:bg-white/30 font-bold">🍖 <span>A</span></button>
+                        <button onclick="selectFeed(event,'B')"    class="flex items-center gap-2 w-full px-4 py-2.5 hover:bg-white/20 active:bg-white/30 font-bold border-t border-white/10">🍖 <span>B</span></button>
+                        <button onclick="selectFeed(event,'both')" class="flex items-center gap-2 w-full px-4 py-2.5 hover:bg-white/20 active:bg-white/30 font-bold border-t border-white/10">🍖 <span>Both</span></button>
+                    </div>
+                </div>
                 <button id="btn-light-icon" onclick="toggleLight()" class="hover:scale-110 transition-transform">
                     <img id="icon-light" src="/static/resource/light_off.png" class="w-8 h-8 object-contain">
                 </button>
@@ -104,9 +112,18 @@
                 <img id="main-icon-light" src="/static/resource/light_off.png" class="w-5 h-5 mr-2 object-contain">
                 <span id="main-text-light">開啟燈光</span>
             </button>
-            <button id="main-btn-feed" onclick="triggerFeed()" class="bg-red-600 text-white py-4 rounded-xl font-black shadow-md transition-all active:scale-95 disabled:opacity-50">
-                <span id="main-text-feed">🚀 立即餵食</span>
-            </button>
+            <!-- 普通畫面餵食：直接三選一 -->
+            <div class="grid grid-cols-3 gap-2">
+                <button id="main-btn-feed-A" onclick="triggerFeed('A')" class="bg-red-600 text-white py-4 rounded-xl font-black shadow-md transition-all active:scale-95 disabled:opacity-50">
+                    <span id="main-text-feed-A">🍖 A</span>
+                </button>
+                <button id="main-btn-feed-B" onclick="triggerFeed('B')" class="bg-red-600 text-white py-4 rounded-xl font-black shadow-md transition-all active:scale-95 disabled:opacity-50">
+                    <span id="main-text-feed-B">🍖 B</span>
+                </button>
+                <button id="main-btn-feed-both" onclick="triggerFeed('both')" class="bg-red-600 text-white py-4 rounded-xl font-black shadow-md transition-all active:scale-95 disabled:opacity-50">
+                    <span id="main-text-feed-both">🍖 Both</span>
+                </button>
+            </div>
         </div>
     </div>
 
@@ -297,16 +314,60 @@
             if(isLightOn) btn.classList.replace('bg-gray-800', 'bg-yellow-500'); else btn.classList.replace('bg-yellow-500', 'bg-gray-800');
         }
 
-        async function triggerFeed() {
+        // --- 下拉選單 ---
+        let feedDropdownOpen = false;
+
+        function toggleFeedDropdown(e) {
+            e.stopPropagation();
+            if (isFeeding) return;
+            feedDropdownOpen = !feedDropdownOpen;
+            document.getElementById('feed-dropdown').classList.toggle('hidden', !feedDropdownOpen);
+        }
+
+        function closeFeedDropdown() {
+            feedDropdownOpen = false;
+            document.getElementById('feed-dropdown').classList.add('hidden');
+        }
+
+        function selectFeed(e, target) {
+            e.stopPropagation();
+            closeFeedDropdown();
+            triggerFeed(target);
+        }
+
+        // 點擊畫面任意處關閉下拉選單
+        document.addEventListener('click', () => { if (feedDropdownOpen) closeFeedDropdown(); });
+
+        // --- 餵食狀態 UI ---
+        const FEED_LABELS = { A: '🍖 A', B: '🍖 B', both: '🍖 Both' };
+
+        function setFeedingState(feeding) {
+            ['A', 'B', 'both'].forEach(t => {
+                const btn  = document.getElementById(`main-btn-feed-${t}`);
+                const span = document.getElementById(`main-text-feed-${t}`);
+                if (!btn) return;
+                btn.disabled = feeding;
+                if (feeding) {
+                    btn.classList.replace('bg-red-600', 'bg-gray-400');
+                    span.textContent = '⏳ 餵食中';
+                } else {
+                    btn.classList.replace('bg-gray-400', 'bg-red-600');
+                    span.textContent = FEED_LABELS[t];
+                }
+            });
+            document.getElementById('icon-feed').textContent = feeding ? '⏳' : '🍖';
+        }
+
+        async function triggerFeed(target = 'both') {
             if (isFeeding) return;
             isFeeding = true;
-            const mainBtn = document.getElementById('main-btn-feed');
-            mainBtn.disabled = true; mainBtn.classList.replace('bg-red-600', 'bg-gray-400');
+            setFeedingState(true);
             try {
-                await fetch('/api/action', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: 'feed'}) });
-                await loadConfig(); 
+                await fetch('/api/action', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: 'feed', target: target}) });
+                await loadConfig();
             } finally {
-                isFeeding = false; mainBtn.disabled = false; mainBtn.classList.replace('bg-gray-400', 'bg-red-600');
+                isFeeding = false;
+                setFeedingState(false);
             }
         }
 

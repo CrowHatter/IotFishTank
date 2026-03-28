@@ -28,26 +28,30 @@ fish_cam = FishCamera()
 scheduler = APScheduler()
 file_lock = threading.Lock()
 
-# --- 2. 輔助函式：同步餵食邏輯 ---
-def perform_dual_feed():
-    """使用執行緒讓兩台餵食器同時啟動"""
-    # 檢查是否任一馬達正在忙碌
-    if feeder_a.is_busy or feeder_b.is_busy:
+# --- 2. 輔助函式：餵食邏輯 ---
+def perform_feed(target='both'):
+    """餵食指定目標並等待完成: target = 'A' | 'B' | 'both'"""
+    feeders = []
+    if target in ('A', 'both'):
+        feeders.append(feeder_a)
+    if target in ('B', 'both'):
+        feeders.append(feeder_b)
+
+    # 任一目標馬達忙碌則拒絕
+    if any(f.is_busy for f in feeders):
         return False
-    
-    # 定義內部執行函式
-    def thread_feed(f): f.feed_sequence()
-    
-    # 建立並啟動執行緒
-    t1 = threading.Thread(target=thread_feed, args=(feeder_a,))
-    t2 = threading.Thread(target=thread_feed, args=(feeder_b,))
-    t1.start()
-    t2.start()
-    
+
+    # 啟動執行緒並等待完成（join 確保 HTTP 回應與實際完成同步）
+    threads = [threading.Thread(target=f.feed_sequence) for f in feeders]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
     # 更新最後餵食時間紀錄
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
     safe_update_config(lambda cfg: {
-        **cfg, 
+        **cfg,
         "device_status": {**cfg["device_status"], "last_fed": now_str}
     })
     return True
@@ -114,7 +118,7 @@ def check_schedule():
             if item.get('enabled') and item.get('time') == now_time:
                 if now_day in item.get('days', []):
                     # 修改：呼叫同步餵食函式
-                    if perform_dual_feed():
+                    if perform_feed('both'):
                         print(f"[{now.strftime('%H:%M:%S')}] 自動雙投餵執行成功")
                     break
 
@@ -238,7 +242,8 @@ def trigger_action():
     action = request.json.get('action')
     if action == 'feed':
         # 修改：呼叫同步餵食函式
-        success = perform_dual_feed()
+        target = request.json.get('target', 'both')
+        success = perform_feed(target)
         return jsonify({"status": "success" if success else "busy"})
     elif action in ['light_on', 'light_off']:
         new_status = "on" if action == 'light_on' else "off"
