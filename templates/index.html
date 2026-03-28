@@ -49,6 +49,8 @@
         .modal-content { z-index: 110; }
         .day-btn { border: 1px solid #d1d5db; border-radius: 0.5rem; font-size: 0.75rem; transition: all 0.2s; background-color: white; padding: 0.5rem 0; }
         .day-btn.active { background-color: #2563eb; color: white; border-color: #2563eb; font-weight: bold; }
+        .stream-btn { background: rgba(0,0,0,0.45); color: #fff; font-size: 0.7rem; font-weight: 700; padding: 0.2rem 0.5rem; border-radius: 0.4rem; cursor: pointer; transition: background 0.15s; white-space: nowrap; border: none; }
+        .stream-btn:hover { background: rgba(255,255,255,0.25); }
     </style>
 </head>
 <body class="bg-gray-100 font-sans">
@@ -71,7 +73,9 @@
         <div id="video-container" class="max-w-5xl mx-auto aspect-video relative overflow-hidden bg-black">
             <img id="video-stream" src="/video_feed" alt="Fish Tank Live Stream">
             
-            <div id="fs-controls" class="absolute top-4 right-4 flex space-x-4 z-50" onclick="event.stopPropagation()">
+            <div id="fs-controls" class="absolute top-4 right-4 flex items-center space-x-2 z-50" onclick="event.stopPropagation()">
+                <button id="btn-res" class="stream-btn" onclick="cycleStream('res')">720p ↺</button>
+                <button id="btn-fps" class="stream-btn" onclick="cycleStream('fps')">20fps ↺</button>
                 <!-- 放大畫面餵食：點擊後出現下拉選單 -->
                 <div id="fs-feed-container" class="relative">
                     <button onclick="toggleFeedDropdown(event)" class="text-3xl hover:scale-110 transition-transform select-none">
@@ -428,6 +432,35 @@
         async function deleteItem(id) { config[activeType] = config[activeType].filter(i => i.id !== id); await saveConfig(); renderList(); }
         
         loadConfig();
+
+        // --- 串流品質控制 ---
+        async function cycleStream(type) {
+            const res = await fetch('/api/stream_setting', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({type})
+            });
+            const data = await res.json();
+            document.getElementById('btn-res').textContent = data.res + ' ↺';
+            document.getElementById('btn-fps').textContent = data.fps + ' ↺';
+            localStorage.setItem('streamRes', data.res);
+            localStorage.setItem('streamFps', data.fps);
+            const img = document.getElementById('video-stream');
+            img.src = '';
+            setTimeout(() => { img.src = '/video_feed'; }, 200);
+        }
+
+        window.addEventListener('DOMContentLoaded', () => {
+            const r = localStorage.getItem('streamRes') || '720p';
+            const f = localStorage.getItem('streamFps') || '20fps';
+            document.getElementById('btn-res').textContent = r + ' ↺';
+            document.getElementById('btn-fps').textContent = f + ' ↺';
+        });
+
+        document.addEventListener('visibilitychange', () => {
+            const img = document.getElementById('video-stream');
+            img.src = document.hidden ? '' : '/video_feed';
+        });
     </script>
 </body>
 </html>

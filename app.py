@@ -24,9 +24,19 @@ feeder_a = FishFeeder(pins=[17, 18, 27, 22])
 # 餵食器 B (新腳位，請根據實體接線修改)
 feeder_b = FishFeeder(pins=[23, 24, 25, 8])
 
-fish_cam = FishCamera() 
+fish_cam = FishCamera()
 scheduler = APScheduler()
 file_lock = threading.Lock()
+
+# --- 串流品質設定 ---
+RES_CYCLE  = [None, (1280, 720), (854, 480), (640, 360)]  # None = 原生 1920x1080
+FPS_CYCLE  = [30, 20, 10]
+RES_LABELS = ['1080p', '720p', '480p', '360p']
+FPS_LABELS = ['30fps', '20fps', '10fps']
+stream_res_idx = 1   # 預設 720p
+stream_fps_idx = 1   # 預設 20fps
+stream_lock = threading.Lock()
+fish_cam.set_output((1280, 720), 80)
 
 # --- 2. 輔助函式：餵食邏輯 ---
 def perform_feed(target='both'):
@@ -142,13 +152,21 @@ scheduler.start()
 
 # --- 影像串流產生器 ---
 def gen_frames():
+    last = 0.0
     while True:
+        fps = FPS_CYCLE[stream_fps_idx]
+        interval = 1.0 / fps
+        now = time.time()
+        if now - last < interval:
+            time.sleep(0.005)
+            continue
         frame = fish_cam.get_frame()
         if frame is None:
             time.sleep(0.1)
             continue
+        last = time.time()
         yield (b'--frame\r\n'
-               b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n\r\n')
+               b'Content-Type: image/webp\r\n\r\n' + frame + b'\r\n\r\n')
 
 # --- 登入管理 ---
 login_manager = LoginManager()
@@ -223,6 +241,21 @@ def index():
 def video_feed():
     return Response(gen_frames(),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
+
+@app.route('/api/stream_setting', methods=['POST'])
+@login_required
+def stream_setting():
+    global stream_res_idx, stream_fps_idx
+    setting_type = request.json.get('type')
+    with stream_lock:
+        if setting_type == 'res':
+            stream_res_idx = (stream_res_idx + 1) % len(RES_CYCLE)
+        elif setting_type == 'fps':
+            stream_fps_idx = (stream_fps_idx + 1) % len(FPS_CYCLE)
+        else:
+            return jsonify({'error': 'invalid type'}), 400
+        fish_cam.set_output(RES_CYCLE[stream_res_idx], 80)
+    return jsonify({'res': RES_LABELS[stream_res_idx], 'fps': FPS_LABELS[stream_fps_idx]})
 
 @app.route('/api/config', methods=['GET'])
 @login_required

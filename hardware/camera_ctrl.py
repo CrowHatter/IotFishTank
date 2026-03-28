@@ -1,10 +1,14 @@
 import cv2
 import time
 import os
+import threading
 
 class FishCamera:
     def __init__(self):
         self.cap = None
+        self.quality = 80
+        self.output_size = (1280, 720)
+        self._cam_lock = threading.Lock()
         self.discover_camera()
 
     def discover_camera(self):
@@ -42,13 +46,21 @@ class FishCamera:
         
         print("--- [Camera] 錯誤：無法開啟鏡頭節點 ---")
 
+    def set_output(self, size, quality):
+        """size = (w, h) or None (native 1080p); quality = 0-100"""
+        with self._cam_lock:
+            self.output_size = size
+            self.quality = quality
+
     def get_frame(self):
-        if self.cap and self.cap.isOpened():
-            ret, frame = self.cap.read()
-            if ret and frame is not None:
-                # 提高 JPEG 品質到 85，確保畫面細節
-                _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
-                return buffer.tobytes()
+        with self._cam_lock:
+            if self.cap and self.cap.isOpened():
+                ret, frame = self.cap.read()
+                if ret and frame is not None:
+                    if self.output_size is not None:
+                        frame = cv2.resize(frame, self.output_size, interpolation=cv2.INTER_AREA)
+                    _, buffer = cv2.imencode('.webp', frame, [cv2.IMWRITE_WEBP_QUALITY, self.quality])
+                    return buffer.tobytes()
         return None
 
     def __del__(self):
