@@ -59,9 +59,15 @@ class FishCamera:
                 if ret and frame is not None:
                     if self.output_size is not None:
                         frame = cv2.resize(frame, self.output_size, interpolation=cv2.INTER_AREA)
-                    _, buffer = cv2.imencode('.webp', frame, [cv2.IMWRITE_WEBP_QUALITY, self.quality])
-                    return buffer.tobytes()
-        return None
+                    # 低解析度（480p/360p）用 WebP 省流量；高解析度用 JPEG 維持效能
+                    use_webp = self.output_size is not None and self.output_size[1] <= 480
+                    if use_webp:
+                        _, buffer = cv2.imencode('.webp', frame, [cv2.IMWRITE_WEBP_QUALITY, self.quality])
+                        return buffer.tobytes(), 'image/webp'
+                    else:
+                        _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, self.quality])
+                        return buffer.tobytes(), 'image/jpeg'
+        return None, None
 
     def __del__(self):
         if self.cap:

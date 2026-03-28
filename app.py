@@ -160,13 +160,12 @@ def gen_frames():
         if now - last < interval:
             time.sleep(0.005)
             continue
-        frame = fish_cam.get_frame()
+        frame, content_type = fish_cam.get_frame()
         if frame is None:
             time.sleep(0.1)
             continue
         last = time.time()
-        yield (b'--frame\r\n'
-               b'Content-Type: image/webp\r\n\r\n' + frame + b'\r\n\r\n')
+        yield (b'--frame\r\nContent-Type: ' + content_type.encode() + b'\r\n\r\n' + frame + b'\r\n\r\n')
 
 # --- 登入管理 ---
 login_manager = LoginManager()
