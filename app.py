@@ -48,12 +48,16 @@ def perform_feed(target='both'):
     for t in threads:
         t.join()
 
-    # 更新最後餵食時間紀錄
+    # 更新最後餵食時間紀錄（A/B 獨立）
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-    safe_update_config(lambda cfg: {
-        **cfg,
-        "device_status": {**cfg["device_status"], "last_fed": now_str}
-    })
+    def _update(cfg):
+        ds = dict(cfg["device_status"])
+        if target in ('A', 'both'):
+            ds['last_fed_A'] = now_str
+        if target in ('B', 'both'):
+            ds['last_fed_B'] = now_str
+        return {**cfg, "device_status": ds}
+    safe_update_config(_update)
     return True
 
 # --- 基礎檔案處理 ---
@@ -164,7 +168,7 @@ if not os.path.exists(CONFIG_FILE):
     default_config = {
         "auto_feed": [],
         "auto_water_change": [],
-        "device_status": { "light": "off", "last_fed": "Never" }
+        "device_status": { "light": "off", "last_fed_A": "Never", "last_fed_B": "Never" }
     }
     write_json(CONFIG_FILE, default_config)
 

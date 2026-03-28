@@ -96,9 +96,10 @@
 
     <div class="max-w-5xl mx-auto p-4 space-y-6">
         <div class="bg-white rounded-xl p-5 shadow-sm border-l-4 border-blue-500 flex justify-between items-center">
-            <div>
+            <div class="space-y-1">
                 <p class="text-gray-400 text-xs mb-1 uppercase tracking-widest font-bold">Status 狀態</p>
-                <p class="text-gray-600 text-sm">最後餵食：<span id="last-fed-time" class="text-blue-600 font-bold">載入中...</span></p>
+                <p class="text-gray-600 text-sm">餵食 A：<span id="last-fed-A" class="text-blue-600 font-bold">載入中...</span></p>
+                <p class="text-gray-600 text-sm">餵食 B：<span id="last-fed-B" class="text-blue-600 font-bold">載入中...</span></p>
             </div>
             <div class="text-right">
                 <span id="temp-display" class="text-4xl font-mono font-black text-blue-500 tracking-tighter">26.5°C</span>
@@ -304,7 +305,8 @@
 
         function updateStatusUI() {
             const status = config.device_status;
-            document.getElementById('last-fed-time').innerText = status.last_fed || "無紀錄";
+            document.getElementById('last-fed-A').innerText = status.last_fed_A || "無紀錄";
+            document.getElementById('last-fed-B').innerText = status.last_fed_B || "無紀錄";
             const isLightOn = status.light === "on";
             const path = isLightOn ? '/static/resource/light_on.png' : '/static/resource/light_off.png';
             document.getElementById('icon-light').src = path;
