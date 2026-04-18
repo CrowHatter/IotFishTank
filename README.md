@@ -130,7 +130,80 @@ sudo systemctl start fishtank.service
 
 ---
 
+## 🛡️ 系統穩定性維護 (Watchdog System)
 
+針對 Raspberry Pi 5 網卡偶發的韌體鎖死 (Firmware Hang, Error -110) 與網路斷連問題，本專案實作了三層防禦機制。
+
+### 1. 網路監控腳本 (Network Watchdog)
+建立於 `/usr/local/bin/net_watchdog.sh`，具備硬體偵測與階段式恢復邏輯：
+```bash
+#!/bin/bash
+
+# 強制定義絕對路徑，確保 Cron 執行時能找到所有指令
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+TARGET="8.8.8.8"
+GATEWAY="192.168.1.1"
+LOG_FILE="/var/log/network_watchdog.log"
+
+# [偵錯] 每次啟動寫入日誌
+echo "$(date): 監控啟動檢查" >> $LOG_FILE
+
+# 1. 第一階段：確認網路是否可連通外網
+/usr/bin/ping -c 3 -W 5 $TARGET > /dev/null 2>&1
+
+if [ $? -eq 0 ]; then
+    # 網路正常，清除舊的 dmesg 錯誤紀錄，避免重複重啟
+    /usr/bin/dmesg -C
+    exit 0
+fi
+
+# 2. 第二階段：檢查是否為硬體鎖死 (Error -110)
+HW_ERROR=$(/usr/bin/dmesg | /usr/bin/tail -n 50 | /usr/bin/grep "\-110")
+
+if [ ! -z "$HW_ERROR" ]; then
+    echo "$(date): [偵測鎖死] 偵測到硬體鎖死訊號，進行最終閘道檢查..." >> $LOG_FILE
+    # 雙重確認：如果連區域網路路由器都 ping 不到，執行強制重啟
+    /usr/bin/ping -c 2 -W 3 $GATEWAY > /dev/null 2>&1
+    if [ $? -ne 0 ]; then
+        echo "$(date): [嚴重故障] 硬體確認鎖死且無法連向路由器，執行強制重啟！" >> $LOG_FILE
+        /usr/bin/dmesg -C
+        /sbin/reboot
+        exit 0
+    fi
+fi
+
+# 3. 第三階段：嘗試軟修復 (重新關聯 Wi-Fi)
+echo "$(date): [階段 1] 網路不通，執行 nmcli 重啟 wlan0..." >> $LOG_FILE
+/usr/bin/nmcli device disconnect wlan0 > /dev/null 2>&1
+/usr/bin/sleep 5
+/usr/bin/nmcli device connect wlan0 > /dev/null 2>&1
+```
+如果是使用 windows 遠端 ssh 複製貼上記得 ```sudo sed -i 's/\r$//' /usr/local/bin/net_watchdog.sh```避免 ```\r```的問題
+
+### 2. 定時任務配置 (Crontab)
+透過 `sudo crontab -e` 進行系統級別的監控與基礎維護：
+```cron
+# 開機自動關閉 Wi-Fi 省電模式，防止鎖死
+@reboot iw dev wlan0 set power_save off
+# 開機 40 秒後主動宣告
+@reboot sleep 40 && /usr/bin/ping -c 5 192.168.1.1 > /dev/null 2>&1
+
+# 每 3 分鐘執行一次監控腳本
+*/3 * * * * /bin/bash /usr/local/bin/net_watchdog.sh
+
+# 每天凌晨 5 點重啟系統
+0 5 * * * /sbin/reboot
+```
+
+### 3. 日誌追蹤 (Logging)
+所有watchdog的動作均記錄於系統標準日誌目錄，可透過以下指令分析運行狀態：
+```bash
+# 查看網路修復與重啟歷史紀錄
+cat /var/log/network_watchdog.log
+```
+
+---
 
 ## 📝 待辦清單 (Todo List)
 
@@ -139,6 +212,7 @@ sudo systemctl start fishtank.service
 - [x] 整合正式鏡頭串流 (MJPEG Stream)
 - [x] 實作 Gunicorn + systemd 自動化部署 (開機自啟動)
 - [x] 採用 gthread 模型優化硬體併發存取
+- [x] 實作多層級 Watchdog 系統 (自動修復 -110 鎖死)
 - [ ] 實作 OpenCV 魚隻偵測 (Object Detection)
 - [ ] 增加環境光感應自動補光功能
 
@@ -148,4 +222,4 @@ sudo systemctl start fishtank.service
 
 * **Gunicorn (gthread)：** 採用作業系統級別的線程 (**pthreads**) 處理併發。相較於非同步協程 (Coroutines)，線程模式在調用 C 擴展庫（如 OpenCV）或操作 GPIO 驅動時具備更佳的穩定性與預測性。
 * **Reverse Proxy (反向代理)：** 由 NAS 處理 SSL 加密。由於 PWA 嚴格要求 **Secure Context** (HTTPS)，此架構是讓樹莓派在內網運行 HTTP 但外網享有 PWA 功能的最佳解。
-* **Service Lifecycle：** 透過 `systemd` 的 `multi-user.target` 級別，確保服務在系統完成網路初始化後即刻啟動，無需人工登入 GUI 介面。
+* **Deterministic System (確定性系統)：** 透過凌晨定時重啟與高頻率watchdog.sh，將系統轉化為可預測的穩定狀態，大幅提升長期運作的無人值守能力。
