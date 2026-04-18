@@ -20,6 +20,7 @@
             "time": "12:00"
         }
     ],
+    "auto_light": [],
     "device_status": {
         "last_fed_A": "2026-04-16 19:55",
         "last_fed_B": "2026-04-18 16:57",
