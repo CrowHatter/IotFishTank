@@ -7,7 +7,7 @@ except ImportError:
     GPIO_AVAILABLE = False
 
 RELAY_PIN = 12
-PULSE_DURATION = 0.1  # 100ms 脈衝
+PULSE_DURATION = 1
 
 
 class LightRelay:

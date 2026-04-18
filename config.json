@@ -5,7 +5,7 @@
                 2,
                 4
             ],
-            "enabled": true,
+            "enabled": false,
             "id": 1772858558358,
             "time": "19:00"
         }
@@ -21,8 +21,8 @@
         }
     ],
     "device_status": {
-        "last_fed_A": "2026-03-08 21:59",
-        "last_fed_B": "2026-03-08 21:59",
-        "light": "off"
+        "last_fed_A": "2026-04-16 19:55",
+        "last_fed_B": "2026-04-18 16:57",
+        "light": "on"
     }
 }
