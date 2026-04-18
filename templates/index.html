@@ -113,6 +113,7 @@
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <button onclick="openManager('auto_feed')" class="bg-white border border-gray-100 py-4 rounded-xl font-bold shadow-sm hover:shadow-md transition-all active:scale-95 text-gray-700">📅 餵食排程管理</button>
             <button onclick="openManager('auto_water_change')" class="bg-white border border-gray-100 py-4 rounded-xl font-bold shadow-sm hover:shadow-md transition-all active:scale-95 text-gray-700">💧 換水排程管理</button>
+            <button onclick="openManager('auto_light')" class="bg-white border border-gray-100 py-4 rounded-xl font-bold shadow-sm hover:shadow-md transition-all active:scale-95 text-gray-700 col-span-2">💡 燈光排程管理</button>
             <button id="main-btn-light" onclick="toggleLight()" class="bg-gray-800 text-white py-4 rounded-xl font-black shadow-md flex items-center justify-center transition-all active:scale-95">
                 <img id="main-icon-light" src="/static/resource/light_off.png" class="w-5 h-5 mr-2 object-contain">
                 <span id="main-text-light">開啟燈光</span>
@@ -155,6 +156,15 @@
                 <h3 class="text-sm font-semibold text-gray-700">新增自動排程</h3>
                 <div class="grid grid-cols-7 gap-1 bg-gray-100 p-1 rounded-lg">
                     <button class="day-btn" data-day="1">一</button><button class="day-btn" data-day="2">二</button><button class="day-btn" data-day="3">三</button><button class="day-btn" data-day="4">四</button><button class="day-btn" data-day="5">五</button><button class="day-btn" data-day="6">六</button><button class="day-btn" data-day="0">日</button>
+                </div>
+                <div id="light-action-row" class="items-center space-x-2 mb-2" style="display:none">
+                    <div class="flex-1 flex items-center bg-gray-50 border border-gray-200 rounded-xl px-3 py-2">
+                        <span class="text-sm font-bold text-gray-500 mr-2">動作</span>
+                        <select id="new-light-action" class="bg-transparent text-sm font-bold outline-none text-gray-700 flex-1">
+                            <option value="on">💡 開燈</option>
+                            <option value="off">🌙 關燈</option>
+                        </select>
+                    </div>
                 </div>
                 <div class="flex items-center space-x-2">
                     <div class="flex-1 flex items-center bg-gray-50 border border-gray-200 rounded-xl px-2 py-1">
@@ -398,6 +408,7 @@
                             <span class="text-xs font-bold text-blue-600">${displayAMPM}</span>
                             <span class="text-2xl font-mono font-black text-gray-800">${displayH}:${m}</span>
                             ${item.enabled ? '<span class="bg-green-100 text-green-700 text-[10px] px-2 py-0.5 rounded-full font-bold">ON</span>' : '<span class="bg-gray-200 text-gray-500 text-[10px] px-2 py-0.5 rounded-full font-bold">OFF</span>'}
+                            ${activeType === 'auto_light' ? (item.action === 'on' ? '<span class="bg-yellow-100 text-yellow-700 text-[10px] px-2 py-0.5 rounded-full font-bold">開燈</span>' : '<span class="bg-gray-100 text-gray-500 text-[10px] px-2 py-0.5 rounded-full font-bold">關燈</span>') : ''}
                         </div>
                         <span class="text-xs font-semibold text-gray-400 mt-1">${item.days.length === 7 ? '每天' : '每週 ' + dayStr}</span>
                     </div>
@@ -421,12 +432,22 @@
             if (ampm === "PM" && h < 12) h += 12;
             if (ampm === "AM" && h === 12) h = 0;
             const time24 = `${h.toString().padStart(2, '0')}:${m}`;
-            config[activeType].push({ id: Date.now(), time: time24, days: selectedDays, enabled: true });
+            const newItem = { id: Date.now(), time: time24, days: selectedDays, enabled: true };
+            if(activeType === 'auto_light') newItem.action = document.getElementById('new-light-action').value;
+            config[activeType].push(newItem);
             await saveConfig(); renderList();
         }
 
         async function saveConfig() { await fetch('/api/config', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(config) }); }
-        function openManager(type) { activeType = type; document.getElementById('modal-title').innerText = type === 'auto_feed' ? '📅 餵食排程管理' : '💧 換水排程管理'; renderList(); document.getElementById('manager-modal').classList.remove('hidden'); }
+        function openManager(type) {
+            activeType = type;
+            const titles = { auto_feed: '📅 餵食排程管理', auto_water_change: '💧 換水排程管理', auto_light: '💡 燈光排程管理' };
+            document.getElementById('modal-title').innerText = titles[type] || '排程管理';
+            const lightAction = document.getElementById('light-action-row');
+            if(lightAction) lightAction.style.display = type === 'auto_light' ? 'flex' : 'none';
+            renderList();
+            document.getElementById('manager-modal').classList.remove('hidden');
+        }
         function closeManager() { document.getElementById('manager-modal').classList.add('hidden'); activeType = ''; }
         async function toggleEnable(id) { const item = config[activeType].find(i => i.id === id); item.enabled = !item.enabled; await saveConfig(); renderList(); }
         async function deleteItem(id) { config[activeType] = config[activeType].filter(i => i.id !== id); await saveConfig(); renderList(); }

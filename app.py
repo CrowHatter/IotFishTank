@@ -8,8 +8,10 @@ from flask_login import LoginManager, UserMixin, login_user, login_required, log
 from werkzeug.security import check_password_hash
 from flask_apscheduler import APScheduler
 from apscheduler.triggers.cron import CronTrigger
+import atexit
 from hardware.motor_ctrl import FishFeeder
 from hardware.camera_ctrl import FishCamera
+from hardware.light_ctrl import LightRelay
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'fish-tank-secret-key-99b3awiet456qr4ojy@@##%&*%KGrkyorlwerk84*/*+59+r5*8giJ*J($)#' 
@@ -25,6 +27,8 @@ feeder_a = FishFeeder(pins=[17, 18, 27, 22])
 feeder_b = FishFeeder(pins=[23, 24, 25, 8])
 
 fish_cam = FishCamera()
+light_relay = LightRelay()
+atexit.register(light_relay.cleanup)
 scheduler = APScheduler()
 file_lock = threading.Lock()
 
@@ -142,6 +146,20 @@ def check_schedule():
                 if now_day in item.get('days', []):
                     print(f"[{now_time}] 觸發自動換水排程 (待實作)")
 
+        light_schedules = config.get('auto_light', [])
+        for item in light_schedules:
+            if item.get('enabled') and item.get('time') == now_time:
+                if now_day in item.get('days', []):
+                    target = item.get('action', 'on')
+                    current = config['device_status'].get('light', 'off')
+                    light_relay.set_state(current, target)
+                    safe_update_config(lambda cfg, t=target: {
+                        **cfg,
+                        "device_status": {**cfg["device_status"], "light": t}
+                    })
+                    print(f"[{now_time}] 自動燈光排程：{target}")
+                    break
+
 scheduler.add_job(
     id='feeder_cron_job', 
     func=check_schedule, 
@@ -185,6 +203,7 @@ if not os.path.exists(CONFIG_FILE):
     default_config = {
         "auto_feed": [],
         "auto_water_change": [],
+        "auto_light": [],
         "device_status": { "light": "off", "last_fed_A": "Never", "last_fed_B": "Never" }
     }
     write_json(CONFIG_FILE, default_config)
@@ -283,8 +302,12 @@ def trigger_action():
         return jsonify({"status": "success" if success else "busy"})
     elif action in ['light_on', 'light_off']:
         new_status = "on" if action == 'light_on' else "off"
+        with file_lock:
+            cfg = read_json(CONFIG_FILE)
+            current_status = cfg["device_status"].get("light", "off")
+            light_relay.set_state(current_status, new_status)
         safe_update_config(lambda cfg: {
-            **cfg, 
+            **cfg,
             "device_status": {**cfg["device_status"], "light": new_status}
         })
         return jsonify({"status": "success"})
