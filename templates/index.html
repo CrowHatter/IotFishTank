@@ -43,6 +43,11 @@
             display: block;
         }
         #video-container:fullscreen { width: 100vw; height: 100vh; display: flex; align-items: center; justify-content: center; }
+        #wt-img-wrap:fullscreen { width: 100vw; height: 100vh; display: flex; align-items: center; justify-content: center; background: #000; }
+        #wt-img-wrap:fullscreen #water-tune-img { width: 100vw; height: 100vh; object-fit: contain; }
+        .wt-i { margin-left: 6px; width: 18px; height: 18px; font-size: 11px; font-weight: bold; font-style: italic; color: #2563eb; border: 1px solid #93c5fd; border-radius: 9999px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+        .wt-i:hover { background: #eff6ff; }
+        .wt-help { margin-top: 6px; font-size: 12px; color: #6b7280; background: #f9fafb; border-left: 3px solid #93c5fd; padding: 8px 10px; border-radius: 6px; line-height: 1.6; }
         .zoom-active { cursor: grab !important; }
         .grabbing { cursor: grabbing !important; }
         .modal-bg { background-color: rgba(0, 0, 0, 0.7); z-index: 100; }
@@ -188,10 +193,13 @@
                 <button onclick="closeWaterTune()" class="p-2 hover:bg-gray-200 rounded-full text-gray-400"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg></button>
             </div>
             <div class="flex-1 overflow-y-auto p-5 space-y-4 bg-gray-50/50">
-                <!-- 預覽影像 + loading 疊層 -->
-                <div class="relative rounded-xl overflow-hidden bg-black min-h-[180px] flex items-center justify-center">
+                <!-- 預覽影像 + 全螢幕鈕 + loading 疊層 -->
+                <div id="wt-img-wrap" class="relative rounded-xl overflow-hidden bg-black min-h-[180px] flex items-center justify-center">
                     <img id="water-tune-img" class="w-full object-contain" alt="水位預覽">
-                    <div id="water-tune-loading" class="absolute inset-0 bg-black/60 flex items-center justify-center text-white font-bold hidden">Loading...</div>
+                    <button onclick="toggleWaterFS(event)" title="全螢幕" class="absolute top-2 right-2 bg-black/50 hover:bg-black/70 text-white p-2 rounded-lg z-10">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4"></path></svg>
+                    </button>
+                    <div id="water-tune-loading" class="absolute inset-0 bg-black/60 flex items-center justify-center text-white font-bold hidden z-20">Loading...</div>
                 </div>
                 <!-- 結果摘要 -->
                 <div class="bg-white rounded-xl p-4 border border-gray-100 text-sm space-y-1">
@@ -200,23 +208,41 @@
                     <p class="text-gray-400 text-xs">圖例：黃線=膠帶底　橘線=容許下限　綠/紅線=水面　淺藍=分析區段</p>
                 </div>
                 <!-- 可調參數 -->
-                <div class="bg-white rounded-xl p-4 border border-gray-100 space-y-3">
+                <div class="bg-white rounded-xl p-4 border border-gray-100 space-y-4">
                     <h3 class="text-sm font-semibold text-gray-700">偵測參數</h3>
                     <div class="grid grid-cols-2 gap-3 text-sm">
-                        <label class="flex flex-col">ROI X1 <span class="text-gray-400 text-xs">(留空=自動中央)</span>
-                            <input id="wt-roi-x1" type="number" class="mt-1 border rounded-lg px-2 py-1.5 font-mono" placeholder="auto"></label>
-                        <label class="flex flex-col">ROI X2
-                            <input id="wt-roi-x2" type="number" class="mt-1 border rounded-lg px-2 py-1.5 font-mono" placeholder="auto"></label>
-                        <label class="flex flex-col">過低門檻 gap (px)
-                            <input id="wt-gap-threshold" type="number" min="1" class="mt-1 border rounded-lg px-2 py-1.5 font-mono"></label>
-                        <label class="flex flex-col">水面搜尋高度比 (0.05–0.9)
-                            <input id="wt-roi-height" type="number" step="0.05" min="0.05" max="0.9" class="mt-1 border rounded-lg px-2 py-1.5 font-mono"></label>
-                        <label class="flex flex-col">膠帶邊緣略過 (px)
-                            <input id="wt-tape-margin" type="number" min="0" class="mt-1 border rounded-lg px-2 py-1.5 font-mono"></label>
-                        <label class="flex flex-col">擷取幀數 (1–30)
-                            <input id="wt-frames" type="number" min="1" max="30" class="mt-1 border rounded-lg px-2 py-1.5 font-mono"></label>
+                        <div class="flex flex-col">
+                            <span class="flex items-center">ROI X1<button type="button" onclick="toggleInfo('info-roi')" class="wt-i">i</button></span>
+                            <input id="wt-roi-x1" type="number" class="mt-1 border rounded-lg px-2 py-1.5 font-mono" placeholder="auto"></div>
+                        <div class="flex flex-col">
+                            <span>ROI X2</span>
+                            <input id="wt-roi-x2" type="number" class="mt-1 border rounded-lg px-2 py-1.5 font-mono" placeholder="auto"></div>
                     </div>
-                    <p class="text-gray-400 text-xs">「擷取幀數」變更需按〈重新擷取〉才會生效。</p>
+                    <p id="info-roi" class="wt-help hidden">分析的水平範圍(像素)，只在這段寬度內找膠帶與水面。X1、X2 同時留空＝自動取畫面中央 1/3。設窄可避開造景、出水口、氣泡;太窄訊號不足、太寬易受干擾。</p>
+
+                    <div class="text-sm flex flex-col">
+                        <span class="flex items-center">過低門檻 gap (px)<button type="button" onclick="toggleInfo('info-gap')" class="wt-i">i</button></span>
+                        <input id="wt-gap-threshold" type="number" min="1" class="mt-1 border rounded-lg px-2 py-1.5 font-mono w-full">
+                        <p id="info-gap" class="wt-help hidden">水面低於膠帶底多少像素就判定「過低」。調大→更寬容(水位要降更多才警示);調小→更敏感(略降即警示)。</p>
+                    </div>
+
+                    <div class="text-sm flex flex-col">
+                        <span class="flex items-center">水面搜尋高度比 (0.05–0.9)<button type="button" onclick="toggleInfo('info-roih')" class="wt-i">i</button></span>
+                        <input id="wt-roi-height" type="number" step="0.05" min="0.05" max="0.9" class="mt-1 border rounded-lg px-2 py-1.5 font-mono w-full">
+                        <p id="info-roih" class="wt-help hidden">從膠帶底往下搜尋水面的範圍，佔畫面高度的比例。調大→能偵測到更低的水位，但可能誤抓下方造景邊緣;調小→只看膠帶附近，較不易誤判但偵測不到大幅下降。</p>
+                    </div>
+
+                    <div class="text-sm flex flex-col">
+                        <span class="flex items-center">膠帶邊緣略過 (px)<button type="button" onclick="toggleInfo('info-margin')" class="wt-i">i</button></span>
+                        <input id="wt-tape-margin" type="number" min="0" class="mt-1 border rounded-lg px-2 py-1.5 font-mono w-full">
+                        <p id="info-margin" class="wt-help hidden">跳過膠帶底緣下方這幾像素再開始找水面，避免把膠帶自身邊緣誤判成水面。調大→更不會誤鎖膠帶，但水面若緊貼膠帶可能被略過;調小→可偵測貼近膠帶的水面，但易誤鎖膠帶邊緣。</p>
+                    </div>
+
+                    <div class="text-sm flex flex-col">
+                        <span class="flex items-center">擷取幀數 (1–30)<button type="button" onclick="toggleInfo('info-frames')" class="wt-i">i</button></span>
+                        <input id="wt-frames" type="number" min="1" max="30" class="mt-1 border rounded-lg px-2 py-1.5 font-mono w-full">
+                        <p id="info-frames" class="wt-help hidden">每次偵測連拍幾張取中值，用來消除魚游動、水波、瞬間反光。調大→更穩定但較慢;調小→較快但易受瞬時干擾。變更後需按〈重新擷取〉才生效。</p>
+                    </div>
                 </div>
             </div>
             <div class="p-4 bg-white border-t border-gray-100 flex gap-3">
@@ -543,6 +569,23 @@
 
         function waterTuneRecapture() {
             waterTuneRequest({ config: readTuneForm(), recapture: true });  // 重新擷取幀
+        }
+
+        function toggleInfo(id) {
+            document.getElementById(id).classList.toggle('hidden');
+        }
+
+        async function toggleWaterFS(e) {
+            e.stopPropagation();
+            const wrap = document.getElementById('wt-img-wrap');
+            if (!document.fullscreenElement) {
+                try {
+                    if (wrap.requestFullscreen) await wrap.requestFullscreen();
+                    else if (wrap.webkitRequestFullscreen) await wrap.webkitRequestFullscreen();
+                } catch (err) { console.error(err); }
+            } else {
+                if (document.exitFullscreen) document.exitFullscreen();
+            }
         }
 
         function renderList() {

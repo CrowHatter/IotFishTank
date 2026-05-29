@@ -295,6 +295,22 @@ if not os.path.exists(CONFIG_FILE):
     }
     write_json(CONFIG_FILE, default_config)
 
+# 確保既有 config.json 也有水位設定欄位（舊檔可能缺少），缺則補上預設值
+def _ensure_water_config():
+    defaults = {
+        "roi_x": None, "gap_threshold_px": 25, "tape_bottom_ref": None,
+        "roi_height_ratio": 0.25, "tape_margin_px": 6, "frames": 8
+    }
+    def _update(cfg):
+        wlc = {**defaults, **cfg.get('water_level_config', {})}
+        ds = dict(cfg.get('device_status', {}))
+        ds.setdefault('water_level_state', 'unknown')
+        ds.setdefault('water_level_percent', None)
+        ds.setdefault('last_water_level_check', 'Never')
+        return {**cfg, "water_level_config": wlc, "device_status": ds}
+    safe_update_config(_update)
+
+_ensure_water_config()
 # 套用 config 中的水位偵測參數
 _init_water_detector()
 

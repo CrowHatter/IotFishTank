@@ -105,14 +105,16 @@ class WaterLevelDetector:
         confidence = min(1.0, peak / (mean_grad * 6.0))
         return int(top + idx), round(confidence, 3)
 
-    def _percent_from_gap(self, gap_px):
-        """gap=0（水面齊膠帶底）→ 100%；gap 達 2 倍門檻 → 0%。"""
-        span = max(1.0, self.gap_threshold_px * 2.0)
-        pct = (1.0 - gap_px / span) * 100.0
+    @staticmethod
+    def _percent_from_waterline(waterline, height):
+        """影像上下緣已切齊魚缸頂/底，故水位% 直接由水面在畫面中的位置換算：
+        水面在頂端(row 0)→100%、在底端(row H)→0%。"""
+        pct = (1.0 - waterline / float(height)) * 100.0
         return int(max(0, min(100, round(pct))))
 
     def _analyze(self, gray):
         """對一張灰階影像執行完整偵測，回傳結果 dict。"""
+        h = gray.shape[0]
         col = self._x_slice(gray)
         tape_bottom = self._find_tape_bottom(col)
         if tape_bottom is None:
@@ -130,7 +132,7 @@ class WaterLevelDetector:
         return {
             "state": state,
             "gap_px": int(gap_px),
-            "percent": self._percent_from_gap(gap_px),
+            "percent": self._percent_from_waterline(waterline, h),
             "tape_bottom": int(tape_bottom),
             "waterline": int(waterline),
             "confidence": confidence,
@@ -179,27 +181,34 @@ class WaterLevelDetector:
         img = bgr_frame.copy()
         h, w = img.shape[:2]
         x1, x2 = self._x_bounds(w)
+        # 字體與線寬隨影像高度縮放，避免在 1080p 上過小
+        fs = max(0.8, h / 720.0)
+        th = max(2, int(round(h / 360.0)))
+        line_th = max(2, int(round(h / 480.0)))
+        pad = int(8 * fs)
+
+        def _label(text, x, y, color):
+            cv2.putText(img, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, fs,
+                        (0, 0, 0), th + 2, cv2.LINE_AA)            # 黑色描邊增加可讀性
+            cv2.putText(img, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, fs,
+                        color, th, cv2.LINE_AA)
 
         # 分析 X 區段（淺藍垂直邊界）
-        cv2.line(img, (x1, 0), (x1, h), (255, 200, 0), 1)
-        cv2.line(img, (x2, 0), (x2, h), (255, 200, 0), 1)
+        cv2.line(img, (x1, 0), (x1, h), (255, 200, 0), line_th)
+        cv2.line(img, (x2, 0), (x2, h), (255, 200, 0), line_th)
 
         tape = result.get("tape_bottom")
         if tape is not None:
-            cv2.line(img, (x1, tape), (x2, tape), (0, 255, 255), 2)  # 黃：膠帶底
-            cv2.putText(img, "TAPE", (x1 + 4, max(14, tape - 6)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv2.LINE_AA)
-            # 容許門檻線（膠帶底 + gap_threshold_px，橘色）
+            cv2.line(img, (x1, tape), (x2, tape), (0, 255, 255), line_th)  # 黃：膠帶底
+            _label("TAPE", x1 + pad, max(int(30 * fs), tape - pad), (0, 255, 255))
             limit = tape + self.gap_threshold_px
             if 0 <= limit < h:
-                cv2.line(img, (x1, limit), (x2, limit), (0, 165, 255), 1)
-                cv2.putText(img, "LIMIT", (x1 + 4, min(h - 4, limit + 14)),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 165, 255), 1, cv2.LINE_AA)
+                cv2.line(img, (x1, limit), (x2, limit), (0, 165, 255), line_th)  # 橘：容許下限
+                _label("LIMIT", x1 + pad, min(h - pad, limit + int(30 * fs)), (0, 165, 255))
 
         water = result.get("waterline")
         if water is not None:
             color = (0, 200, 0) if result.get("state") == "ok" else (0, 0, 255)
-            cv2.line(img, (x1, water), (x2, water), color, 2)  # 綠/紅：水面
-            cv2.putText(img, "WATER", (x1 + 4, min(h - 4, water + 16)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
+            cv2.line(img, (x1, water), (x2, water), color, line_th)  # 綠/紅：水面
+            _label("WATER", x1 + pad, min(h - pad, water + int(34 * fs)), color)
         return img
