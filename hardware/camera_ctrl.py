@@ -52,6 +52,16 @@ class FishCamera:
             self.output_size = size
             self.quality = quality
 
+    def get_raw_frame(self):
+        """回傳原生解析度 BGR numpy frame（供影像分析用），失敗回 None。
+        不經過 resize/編碼，與串流用的 get_frame() 分開。"""
+        with self._cam_lock:
+            if self.cap and self.cap.isOpened():
+                ret, frame = self.cap.read()
+                if ret and frame is not None:
+                    return frame
+        return None
+
     def get_frame(self):
         with self._cam_lock:
             if self.cap and self.cap.isOpened():

@@ -104,6 +104,7 @@
                 <p class="text-gray-400 text-xs mb-1 uppercase tracking-widest font-bold">Status 狀態</p>
                 <p class="text-gray-600 text-sm">餵食 A：<span id="last-fed-A" class="text-blue-600 font-bold">載入中...</span></p>
                 <p class="text-gray-600 text-sm">餵食 B：<span id="last-fed-B" class="text-blue-600 font-bold">載入中...</span></p>
+                <p class="text-gray-600 text-sm">水位：<span id="water-level" class="font-bold text-gray-400">載入中...</span></p>
             </div>
             <div class="text-right">
                 <span id="temp-display" class="text-3xl font-mono font-black text-blue-500 tracking-tighter">26.5°C</span>
@@ -114,6 +115,7 @@
             <button onclick="openManager('auto_feed')" class="bg-white border border-gray-100 py-4 rounded-xl font-bold shadow-sm hover:shadow-md transition-all active:scale-95 text-gray-700">📅 餵食排程管理</button>
             <button onclick="openManager('auto_water_change')" class="bg-white border border-gray-100 py-4 rounded-xl font-bold shadow-sm hover:shadow-md transition-all active:scale-95 text-gray-700">💧 換水排程管理</button>
             <button onclick="openManager('auto_light')" class="bg-white border border-gray-100 py-4 rounded-xl font-bold shadow-sm hover:shadow-md transition-all active:scale-95 text-gray-700 col-span-2">💡 燈光排程管理</button>
+            <button id="main-btn-water-check" onclick="checkWaterLevel()" class="bg-white border border-gray-100 py-4 rounded-xl font-bold shadow-sm hover:shadow-md transition-all active:scale-95 text-gray-700 col-span-2"><span id="main-text-water-check">🌊 檢查水位</span></button>
             <button id="main-btn-light" onclick="toggleLight()" class="bg-gray-800 text-white py-4 rounded-xl font-black shadow-md flex items-center justify-center transition-all active:scale-95">
                 <img id="main-icon-light" src="/static/resource/light_off.png" class="w-5 h-5 mr-2 object-contain">
                 <span id="main-text-light">開啟燈光</span>
@@ -175,6 +177,51 @@
                     </div>
                     <button onclick="addItem()" class="bg-blue-600 hover:bg-blue-700 text-white w-12 h-12 rounded-xl flex items-center justify-center shadow-lg active:scale-95 transition-all"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg></button>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="water-tune-modal" class="fixed inset-0 modal-bg hidden flex items-center justify-center p-4" style="z-index: 150;">
+        <div class="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden modal-content flex flex-col max-h-[92vh]">
+            <div class="p-5 border-b flex justify-between items-center bg-gray-50">
+                <h2 class="font-bold text-xl text-gray-800">🌊 水位偵測調校</h2>
+                <button onclick="closeWaterTune()" class="p-2 hover:bg-gray-200 rounded-full text-gray-400"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg></button>
+            </div>
+            <div class="flex-1 overflow-y-auto p-5 space-y-4 bg-gray-50/50">
+                <!-- 預覽影像 + loading 疊層 -->
+                <div class="relative rounded-xl overflow-hidden bg-black min-h-[180px] flex items-center justify-center">
+                    <img id="water-tune-img" class="w-full object-contain" alt="水位預覽">
+                    <div id="water-tune-loading" class="absolute inset-0 bg-black/60 flex items-center justify-center text-white font-bold hidden">Loading...</div>
+                </div>
+                <!-- 結果摘要 -->
+                <div class="bg-white rounded-xl p-4 border border-gray-100 text-sm space-y-1">
+                    <p class="text-gray-600">狀態：<span id="wt-state" class="font-bold">--</span></p>
+                    <p class="text-gray-600">水位：<span id="wt-percent" class="font-bold">--</span> ・ gap：<span id="wt-gap" class="font-mono">--</span> px ・ 信心：<span id="wt-conf" class="font-mono">--</span></p>
+                    <p class="text-gray-400 text-xs">圖例：黃線=膠帶底　橘線=容許下限　綠/紅線=水面　淺藍=分析區段</p>
+                </div>
+                <!-- 可調參數 -->
+                <div class="bg-white rounded-xl p-4 border border-gray-100 space-y-3">
+                    <h3 class="text-sm font-semibold text-gray-700">偵測參數</h3>
+                    <div class="grid grid-cols-2 gap-3 text-sm">
+                        <label class="flex flex-col">ROI X1 <span class="text-gray-400 text-xs">(留空=自動中央)</span>
+                            <input id="wt-roi-x1" type="number" class="mt-1 border rounded-lg px-2 py-1.5 font-mono" placeholder="auto"></label>
+                        <label class="flex flex-col">ROI X2
+                            <input id="wt-roi-x2" type="number" class="mt-1 border rounded-lg px-2 py-1.5 font-mono" placeholder="auto"></label>
+                        <label class="flex flex-col">過低門檻 gap (px)
+                            <input id="wt-gap-threshold" type="number" min="1" class="mt-1 border rounded-lg px-2 py-1.5 font-mono"></label>
+                        <label class="flex flex-col">水面搜尋高度比 (0.05–0.9)
+                            <input id="wt-roi-height" type="number" step="0.05" min="0.05" max="0.9" class="mt-1 border rounded-lg px-2 py-1.5 font-mono"></label>
+                        <label class="flex flex-col">膠帶邊緣略過 (px)
+                            <input id="wt-tape-margin" type="number" min="0" class="mt-1 border rounded-lg px-2 py-1.5 font-mono"></label>
+                        <label class="flex flex-col">擷取幀數 (1–30)
+                            <input id="wt-frames" type="number" min="1" max="30" class="mt-1 border rounded-lg px-2 py-1.5 font-mono"></label>
+                    </div>
+                    <p class="text-gray-400 text-xs">「擷取幀數」變更需按〈重新擷取〉才會生效。</p>
+                </div>
+            </div>
+            <div class="p-4 bg-white border-t border-gray-100 flex gap-3">
+                <button onclick="waterTuneApply()" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-bold active:scale-95 transition-all">套用並重繪</button>
+                <button onclick="waterTuneRecapture()" class="flex-1 bg-gray-700 hover:bg-gray-800 text-white py-3 rounded-xl font-bold active:scale-95 transition-all">重新擷取 8 幀</button>
             </div>
         </div>
     </div>
@@ -321,6 +368,7 @@
             const status = config.device_status;
             document.getElementById('last-fed-A').innerText = status.last_fed_A || "無紀錄";
             document.getElementById('last-fed-B').innerText = status.last_fed_B || "無紀錄";
+            updateWaterLevelUI(status);
             const isLightOn = status.light === "on";
             const path = isLightOn ? '/static/resource/light_on.png' : '/static/resource/light_off.png';
             document.getElementById('icon-light').src = path;
@@ -328,6 +376,25 @@
             document.getElementById('main-text-light').innerText = isLightOn ? '關閉燈光' : '開啟燈光';
             const btn = document.getElementById('main-btn-light');
             if(isLightOn) btn.classList.replace('bg-gray-800', 'bg-yellow-500'); else btn.classList.replace('bg-yellow-500', 'bg-gray-800');
+        }
+
+        function updateWaterLevelUI(status) {
+            const el = document.getElementById('water-level');
+            if (!el) return;
+            const state = status.water_level_state;
+            const pct = status.water_level_percent;
+            const pctStr = (pct === null || pct === undefined) ? '--' : pct + '%';
+            el.classList.remove('text-gray-400', 'text-green-600', 'text-red-600');
+            if (state === 'low') {
+                el.classList.add('text-red-600');
+                el.innerText = `${pctStr}・過低`;
+            } else if (state === 'ok' || state === 'normal') {
+                el.classList.add('text-green-600');
+                el.innerText = `${pctStr}・正常`;
+            } else {
+                el.classList.add('text-gray-400');
+                el.innerText = '無紀錄';
+            }
         }
 
         // --- 下拉選單 ---
@@ -391,6 +458,91 @@
             const current = config.device_status.light === "on" ? 'light_off' : 'light_on';
             await fetch('/api/action', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: current}) });
             await loadConfig();
+        }
+
+        // --- 水位偵測調校 modal ---
+        let isWaterTuneBusy = false;
+
+        function checkWaterLevel() {
+            // 開啟調校視窗並擷取第一組 8 幀
+            document.getElementById('water-tune-modal').classList.remove('hidden');
+            document.getElementById('water-tune-img').src = '';
+            waterTuneRequest({ recapture: true });
+        }
+
+        function closeWaterTune() {
+            document.getElementById('water-tune-modal').classList.add('hidden');
+            loadConfig();   // 同步主畫面狀態列
+        }
+
+        function readTuneForm() {
+            const numOrNull = (id) => {
+                const v = document.getElementById(id).value;
+                return v === '' ? null : Number(v);
+            };
+            const x1 = numOrNull('wt-roi-x1');
+            const x2 = numOrNull('wt-roi-x2');
+            const roi_x = (x1 === null || x2 === null) ? null : [x1, x2];
+            return {
+                roi_x: roi_x,
+                gap_threshold_px: numOrNull('wt-gap-threshold'),
+                roi_height_ratio: numOrNull('wt-roi-height'),
+                tape_margin_px: numOrNull('wt-tape-margin'),
+                frames: numOrNull('wt-frames'),
+            };
+        }
+
+        function fillTuneForm(cfg) {
+            document.getElementById('wt-roi-x1').value = (cfg.roi_x && cfg.roi_x.length === 2) ? cfg.roi_x[0] : '';
+            document.getElementById('wt-roi-x2').value = (cfg.roi_x && cfg.roi_x.length === 2) ? cfg.roi_x[1] : '';
+            document.getElementById('wt-gap-threshold').value = cfg.gap_threshold_px ?? '';
+            document.getElementById('wt-roi-height').value = cfg.roi_height_ratio ?? '';
+            document.getElementById('wt-tape-margin').value = cfg.tape_margin_px ?? '';
+            document.getElementById('wt-frames').value = cfg.frames ?? '';
+        }
+
+        function renderTuneResult(result) {
+            const stateEl = document.getElementById('wt-state');
+            const map = { ok: ['正常', 'text-green-600'], low: ['過低', 'text-red-600'] };
+            const [label, cls] = map[result.state] || [`無法判讀 (${result.reason || 'unknown'})`, 'text-gray-400'];
+            stateEl.className = 'font-bold ' + cls;
+            stateEl.innerText = label;
+            document.getElementById('wt-percent').innerText = (result.percent ?? '--') + (result.percent != null ? '%' : '');
+            document.getElementById('wt-gap').innerText = result.gap_px ?? '--';
+            document.getElementById('wt-conf').innerText = result.confidence ?? '--';
+        }
+
+        async function waterTuneRequest(payload) {
+            if (isWaterTuneBusy) return;
+            isWaterTuneBusy = true;
+            document.getElementById('water-tune-loading').classList.remove('hidden');
+            try {
+                const res = await fetch('/api/water_level/tune', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                const data = await res.json();
+                if (data.status !== 'success') {
+                    alert('偵測失敗：' + (data.reason || '未知錯誤'));
+                    return;
+                }
+                if (data.image) document.getElementById('water-tune-img').src = 'data:image/jpeg;base64,' + data.image;
+                renderTuneResult(data.result || {});
+                fillTuneForm(data.config || {});
+            } catch (e) {
+                alert('連線錯誤：' + e);
+            } finally {
+                isWaterTuneBusy = false;
+                document.getElementById('water-tune-loading').classList.add('hidden');
+            }
+        }
+
+        function waterTuneApply() {
+            waterTuneRequest({ config: readTuneForm() });          // 套用新參數，沿用同一組幀重繪
+        }
+
+        function waterTuneRecapture() {
+            waterTuneRequest({ config: readTuneForm(), recapture: true });  // 重新擷取幀
         }
 
         function renderList() {

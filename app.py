@@ -2,6 +2,8 @@ import json
 import os
 import threading
 import time
+import base64
+import cv2
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, jsonify, redirect, url_for, flash, Response
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user
@@ -12,6 +14,7 @@ import atexit
 from hardware.motor_ctrl import FishFeeder
 from hardware.camera_ctrl import FishCamera
 from hardware.light_ctrl import LightRelay
+from hardware.water_level import WaterLevelDetector
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'fish-tank-secret-key-99b3awiet456qr4ojy@@##%&*%KGrkyorlwerk84*/*+59+r5*8giJ*J($)#' 
@@ -29,6 +32,17 @@ feeder_b = FishFeeder(pins=[23, 24, 25, 8])
 fish_cam = FishCamera()
 light_relay = LightRelay()
 atexit.register(light_relay.cleanup)
+
+# 水位偵測器：參數於 config 載入後再套用（見下方 _init_water_detector）
+water_detector = WaterLevelDetector(fish_cam)
+def _init_water_detector():
+    cfg = read_json(CONFIG_FILE).get('water_level_config', {})
+    water_detector.roi_x = tuple(cfg['roi_x']) if cfg.get('roi_x') else None
+    water_detector.gap_threshold_px = cfg.get('gap_threshold_px', 25)
+    water_detector.tape_bottom_ref = cfg.get('tape_bottom_ref')
+    water_detector.roi_height_ratio = cfg.get('roi_height_ratio', 0.25)
+    water_detector.tape_margin_px = cfg.get('tape_margin_px', 6)
+    water_detector.frames = cfg.get('frames', 8)
 scheduler = APScheduler()
 file_lock = threading.Lock()
 
@@ -73,6 +87,61 @@ def perform_feed(target='both'):
         return {**cfg, "device_status": ds}
     safe_update_config(_update)
     return True
+
+# --- 輔助函式：水位偵測 ---
+# 調校用：暫存最近擷取的 8 幀，讓使用者能對同一組畫面反覆調參數
+_water_frames = []
+_water_frames_lock = threading.Lock()
+
+def _write_water_status(result):
+    """把偵測結果寫回 device_status。state == 'low' 時記警示旗標（補水馬達尚未實裝）。"""
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+    def _update(cfg):
+        ds = dict(cfg["device_status"])
+        ds['water_level_state'] = result.get('state', 'unknown')
+        ds['water_level_percent'] = result.get('percent')
+        ds['water_level_gap_px'] = result.get('gap_px')
+        ds['last_water_level_check'] = now_str
+        ds['water_level_alert'] = (result.get('state') == 'low')
+        return {**cfg, "device_status": ds}
+    safe_update_config(_update)
+    if result.get('state') == 'low':
+        print(f"[{now_str}] ⚠️ 水位過低警示 gap={result.get('gap_px')}px "
+              f"({result.get('percent')}%)（補水馬達尚未實裝）")
+
+def perform_water_level_check():
+    """即時擷取多幀偵測，寫回 device_status，回傳結果 dict。"""
+    result = water_detector.detect()
+    _write_water_status(result)
+    return result
+
+def _capture_water_frames(n):
+    frames = []
+    for _ in range(n):
+        f = fish_cam.get_raw_frame()
+        if f is not None:
+            frames.append(f)
+    return frames
+
+def _sanitize_water_cfg(raw):
+    """從前端送來的 dict 取出可調參數並做型別轉換，未知/無效值忽略。"""
+    out = {}
+    if 'roi_x' in raw:
+        v = raw['roi_x']
+        if v in (None, '', [], 'null'):
+            out['roi_x'] = None
+        elif isinstance(v, (list, tuple)) and len(v) == 2:
+            x1, x2 = int(v[0]), int(v[1])
+            out['roi_x'] = [min(x1, x2), max(x1, x2)]
+    if 'gap_threshold_px' in raw:
+        out['gap_threshold_px'] = max(1, int(raw['gap_threshold_px']))
+    if 'roi_height_ratio' in raw:
+        out['roi_height_ratio'] = float(min(0.9, max(0.05, float(raw['roi_height_ratio']))))
+    if 'tape_margin_px' in raw:
+        out['tape_margin_px'] = max(0, int(raw['tape_margin_px']))
+    if 'frames' in raw:
+        out['frames'] = min(30, max(1, int(raw['frames'])))
+    return out
 
 # --- 基礎檔案處理 ---
 def read_json(filename):
@@ -160,6 +229,15 @@ def check_schedule():
                     print(f"[{now_time}] 自動燈光排程：{target}")
                     break
 
+        water_level_schedules = config.get('auto_water_level', [])
+        for item in water_level_schedules:
+            if item.get('enabled') and item.get('time') == now_time:
+                if now_day in item.get('days', []):
+                    res = perform_water_level_check()
+                    print(f"[{now_time}] 自動水位偵測：{res.get('state')} "
+                          f"({res.get('percent')}%)")
+                    break
+
 scheduler.add_job(
     id='feeder_cron_job', 
     func=check_schedule, 
@@ -204,9 +282,21 @@ if not os.path.exists(CONFIG_FILE):
         "auto_feed": [],
         "auto_water_change": [],
         "auto_light": [],
-        "device_status": { "light": "off", "last_fed_A": "Never", "last_fed_B": "Never" }
+        "auto_water_level": [],
+        "water_level_config": {
+            "roi_x": None, "gap_threshold_px": 25, "tape_bottom_ref": None,
+            "roi_height_ratio": 0.25, "tape_margin_px": 6, "frames": 8
+        },
+        "device_status": {
+            "light": "off", "last_fed_A": "Never", "last_fed_B": "Never",
+            "water_level_state": "unknown", "water_level_percent": None,
+            "last_water_level_check": "Never"
+        }
     }
     write_json(CONFIG_FILE, default_config)
+
+# 套用 config 中的水位偵測參數
+_init_water_detector()
 
 # --- 路由與 API ---
 @app.route('/login', methods=['GET', 'POST'])
@@ -311,7 +401,64 @@ def trigger_action():
             "device_status": {**cfg["device_status"], "light": new_status}
         })
         return jsonify({"status": "success"})
+    elif action == 'check_water_level':
+        result = perform_water_level_check()
+        return jsonify({"status": "success", "result": result})
     return jsonify({"status": "received"})
+
+@app.route('/api/water_level/tune', methods=['POST'])
+@login_required
+def water_level_tune():
+    """互動式調校：
+    - body.config 存在 → 寫入 water_level_config 並即時套用
+    - body.recapture 為真，或目前無暫存幀 → 重新擷取 N 幀並暫存
+    - 否則沿用暫存的同一組幀重新分析
+    回傳：標註後影像(base64 JPEG)、偵測結果、目前 config。"""
+    global _water_frames
+    body = request.json or {}
+
+    new_cfg = body.get('config')
+    if new_cfg:
+        clean = _sanitize_water_cfg(new_cfg)
+        def _update(cfg):
+            wlc = dict(cfg.get('water_level_config', {}))
+            wlc.update(clean)
+            return {**cfg, "water_level_config": wlc}
+        safe_update_config(_update)
+        _init_water_detector()
+
+    with _water_frames_lock:
+        if body.get('recapture') or not _water_frames:
+            _water_frames = _capture_water_frames(water_detector.frames)
+        frames = list(_water_frames)
+
+    if not frames:
+        return jsonify({"status": "error", "reason": "no_frame"}), 503
+
+    result = water_detector.analyze_frames(frames)
+    annotated = water_detector.annotate(frames[0], result)
+    ok, buf = cv2.imencode('.jpg', annotated, [cv2.IMWRITE_JPEG_QUALITY, 80])
+    img_b64 = base64.b64encode(buf.tobytes()).decode('ascii') if ok else None
+
+    _write_water_status(result)
+    cfg = read_json(CONFIG_FILE).get('water_level_config', {})
+    return jsonify({"status": "success", "result": result,
+                    "config": cfg, "image": img_b64})
+
+@app.route('/api/water_level/calibrate', methods=['POST'])
+@login_required
+def water_level_calibrate():
+    cal = water_detector.calibrate()
+    if not cal.get('ok'):
+        return jsonify({"status": "error", "reason": cal.get('reason')}), 400
+    # 寫入基準到 water_level_config，並即時套用
+    def _update(cfg):
+        wlc = dict(cfg.get('water_level_config', {}))
+        wlc['tape_bottom_ref'] = cal['tape_bottom_ref']
+        return {**cfg, "water_level_config": wlc}
+    safe_update_config(_update)
+    water_detector.tape_bottom_ref = cal['tape_bottom_ref']
+    return jsonify({"status": "success", "calibration": cal})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5080, debug=False, threaded=True)

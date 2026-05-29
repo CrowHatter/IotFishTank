@@ -8,6 +8,76 @@
             "enabled": false,
             "id": 1772858558358,
             "time": "19:00"
+        },
+        {
+            "days": [
+                3
+            ],
+            "enabled": true,
+            "id": 1776589884132,
+            "time": "19:00"
+        }
+    ],
+    "auto_light": [
+        {
+            "action": "off",
+            "days": [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5,
+                6
+            ],
+            "enabled": true,
+            "id": 1776514707568,
+            "time": "21:00"
+        },
+        {
+            "action": "off",
+            "days": [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5,
+                6
+            ],
+            "enabled": true,
+            "id": 1776946302401,
+            "time": "13:00"
+        },
+        {
+            "action": "on",
+            "days": [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5,
+                6
+            ],
+            "enabled": true,
+            "id": 1779591031838,
+            "time": "10:30"
+        },
+        {
+            "id": 1779599799400,
+            "time": "14:30",
+            "days": [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5,
+                6
+            ],
+            "enabled": true,
+            "action": "on"
         }
     ],
     "auto_water_change": [
@@ -20,10 +90,9 @@
             "time": "12:00"
         }
     ],
-    "auto_light": [],
     "device_status": {
-        "last_fed_A": "2026-04-16 19:55",
-        "last_fed_B": "2026-04-18 16:57",
+        "last_fed_A": "2026-05-29 14:59",
+        "last_fed_B": "2026-05-27 19:00",
         "light": "on"
     }
 }
