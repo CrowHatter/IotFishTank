@@ -20,53 +20,8 @@
     ],
     "auto_light": [
         {
-            "action": "off",
-            "days": [
-                0,
-                1,
-                2,
-                3,
-                4,
-                5,
-                6
-            ],
-            "enabled": true,
-            "id": 1776514707568,
-            "time": "21:00"
-        },
-        {
-            "action": "off",
-            "days": [
-                0,
-                1,
-                2,
-                3,
-                4,
-                5,
-                6
-            ],
-            "enabled": true,
-            "id": 1776946302401,
-            "time": "13:00"
-        },
-        {
-            "action": "on",
-            "days": [
-                0,
-                1,
-                2,
-                3,
-                4,
-                5,
-                6
-            ],
-            "enabled": true,
-            "id": 1779591031838,
-            "time": "10:30"
-        },
-        {
-            "id": 1779599799400,
-            "time": "14:30",
+            "id": 1780053175959,
+            "time": "09:00",
             "days": [
                 0,
                 1,
@@ -78,6 +33,21 @@
             ],
             "enabled": true,
             "action": "on"
+        },
+        {
+            "id": 1780053187124,
+            "time": "21:00",
+            "days": [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5,
+                6
+            ],
+            "enabled": true,
+            "action": "off"
         }
     ],
     "auto_water_change": [
@@ -93,6 +63,11 @@
     "device_status": {
         "last_fed_A": "2026-05-29 14:59",
         "last_fed_B": "2026-05-27 19:00",
-        "light": "on"
+        "last_water_level_check": "2026-05-29 19:15",
+        "light": "on",
+        "water_level_alert": true,
+        "water_level_gap_px": 50,
+        "water_level_percent": 0,
+        "water_level_state": "low"
     }
 }
