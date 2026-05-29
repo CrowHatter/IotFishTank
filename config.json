@@ -63,24 +63,24 @@
     "device_status": {
         "last_fed_A": "2026-05-29 14:59",
         "last_fed_B": "2026-05-27 19:00",
-        "last_water_level_check": "2026-05-29 20:40",
-        "light": "on",
-        "water_level_alert": true,
-        "water_level_gap_px": 89,
-        "water_level_percent": 82,
-        "water_level_state": "low"
+        "last_water_level_check": "2026-05-30 02:03",
+        "light": "off",
+        "water_level_alert": false,
+        "water_level_gap_px": 0,
+        "water_level_percent": 100,
+        "water_level_state": "ok"
     },
     "water_level_config": {
         "roi_x": [
-            50,
-            400
+            20,
+            380
         ],
         "gap_threshold_px": 1,
         "tape_bottom_ref": null,
         "roi_height_ratio": 0.2,
-        "tape_margin_px": 10,
-        "frames": 8,
-        "gray_gamma": 3.0,
-        "waterline_min_grad": 4.0
+        "tape_margin_px": 20,
+        "frames": 15,
+        "gray_gamma": 1.2,
+        "waterline_min_grad": 5.0
     }
 }
