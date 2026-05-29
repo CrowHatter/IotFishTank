@@ -78,21 +78,44 @@ class WaterLevelDetector:
 
     # --- 偵測核心 ---
     def _find_tape_bottom(self, col):
-        """col: (H, W') 灰階區段。找頂部深色膠帶的底緣 row，找不到回 None。"""
+        """col: (H, W') 灰階區段。膠帶是畫面上半部的一段深色「區間」(未必從頂端開始)，
+        找出最厚的那段連續暗帶當作膠帶，回傳其底緣 row。找不到回 None。"""
         h = col.shape[0]
         row_mean = col.mean(axis=1)
-        upper = row_mean[: h // 2]
-        dark_thresh = max(40.0, float(row_mean.mean()) - 2.0 * float(row_mean.std()))
-        dark_rows = np.where(upper < dark_thresh)[0]
-        if dark_rows.size == 0:
+        n_search = h // 2                     # 膠帶位於畫面上半部
+        dark_thresh = max(40.0, float(row_mean.mean()) - 1.5 * float(row_mean.std()))
+        dark = row_mean[:n_search] < dark_thresh
+        if not dark.any():
             return None
-        bottom = dark_rows[0]
-        for r in dark_rows:
-            if r <= bottom + 3:   # 容忍小斷點
-                bottom = r
+
+        # 掃出所有連續暗帶（容忍 <=2px 的小斷點），記錄每段的 (start, end)
+        runs = []
+        i = 0
+        while i < n_search:
+            if dark[i]:
+                start = i
+                end = i
+                gap = 0
+                k = i
+                while k + 1 < n_search:
+                    k += 1
+                    if dark[k]:
+                        end = k
+                        gap = 0
+                    else:
+                        gap += 1
+                        if gap > 2:
+                            break
+                runs.append((start, end))
+                i = end + 1
             else:
-                break
-        return int(bottom)
+                i += 1
+        if not runs:
+            return None
+
+        # 取最厚(最長)的暗帶當膠帶 → 它的底緣才是水位基準線
+        start, end = max(runs, key=lambda r: r[1] - r[0])
+        return int(end)
 
     def _find_waterline(self, col, tape_bottom):
         """在 tape_bottom 下方 ROI 內找水面線（最大垂直梯度 row）。
