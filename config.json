@@ -13,15 +13,14 @@
             "days": [
                 3
             ],
-            "enabled": true,
+            "enabled": false,
             "id": 1776589884132,
             "time": "19:00"
         }
     ],
     "auto_light": [
         {
-            "id": 1780053175959,
-            "time": "09:00",
+            "action": "on",
             "days": [
                 0,
                 1,
@@ -32,11 +31,11 @@
                 6
             ],
             "enabled": true,
-            "action": "on"
+            "id": 1780053175959,
+            "time": "09:00"
         },
         {
-            "id": 1780053187124,
-            "time": "21:00",
+            "action": "off",
             "days": [
                 0,
                 1,
@@ -47,7 +46,8 @@
                 6
             ],
             "enabled": true,
-            "action": "off"
+            "id": 1780053187124,
+            "time": "21:00"
         }
     ],
     "auto_water_change": [
@@ -63,11 +63,22 @@
     "device_status": {
         "last_fed_A": "2026-05-29 14:59",
         "last_fed_B": "2026-05-27 19:00",
-        "last_water_level_check": "2026-05-29 19:15",
+        "last_water_level_check": "2026-05-29 19:42",
         "light": "on",
         "water_level_alert": true,
-        "water_level_gap_px": 50,
-        "water_level_percent": 0,
+        "water_level_gap_px": 36,
+        "water_level_percent": 81,
         "water_level_state": "low"
+    },
+    "water_level_config": {
+        "roi_x": [
+            200,
+            800
+        ],
+        "gap_threshold_px": 25,
+        "tape_bottom_ref": null,
+        "roi_height_ratio": 0.25,
+        "tape_margin_px": 30,
+        "frames": 8
     }
 }
