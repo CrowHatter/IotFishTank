@@ -43,8 +43,12 @@
             display: block;
         }
         #video-container:fullscreen { width: 100vw; height: 100vh; display: flex; align-items: center; justify-content: center; }
+        #wt-img-wrap { touch-action: none; user-select: none; overflow: hidden; }
+        #wt-zoom { transform-origin: center center; transition: transform 0.1s ease-out; width: 100%; }
         #wt-img-wrap:fullscreen { width: 100vw; height: 100vh; display: flex; align-items: center; justify-content: center; background: #000; }
-        #wt-img-wrap:fullscreen #water-tune-img { width: 100vw; height: 100vh; object-fit: contain; }
+        #wt-img-wrap:fullscreen #wt-zoom { width: 100vw; height: 100vh; }
+        #wt-img-wrap:fullscreen #water-tune-img,
+        #wt-img-wrap:fullscreen #water-tune-gray { width: 100vw; height: 100vh; object-fit: contain; }
         .wt-i { margin-left: 6px; width: 18px; height: 18px; font-size: 11px; font-weight: bold; font-style: italic; color: #2563eb; border: 1px solid #93c5fd; border-radius: 9999px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
         .wt-i:hover { background: #eff6ff; }
         .wt-help { margin-top: 6px; font-size: 12px; color: #6b7280; background: #f9fafb; border-left: 3px solid #93c5fd; padding: 8px 10px; border-radius: 6px; line-height: 1.6; }
@@ -193,18 +197,30 @@
                 <button onclick="closeWaterTune()" class="p-2 hover:bg-gray-200 rounded-full text-gray-400"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg></button>
             </div>
             <div class="flex-1 overflow-y-auto p-5 space-y-4 bg-gray-50/50">
-                <!-- 預覽影像 + 全螢幕鈕 + loading 疊層 -->
-                <div id="wt-img-wrap" class="relative rounded-xl overflow-hidden bg-black min-h-[180px] flex items-center justify-center">
-                    <img id="water-tune-img" class="w-full object-contain" alt="水位預覽">
+                <!-- 預覽影像（彩色 + 灰階對照） + 全螢幕鈕 + loading 疊層 -->
+                <div id="wt-img-wrap" class="relative rounded-xl bg-black min-h-[180px] flex items-center justify-center">
+                    <div id="wt-zoom" class="relative">
+                        <img id="water-tune-img" class="w-full object-contain block" alt="水位預覽(原圖)">
+                        <div id="wt-gray-layer" class="absolute inset-0" style="clip-path: inset(0 100% 0 0);">
+                            <img id="water-tune-gray" class="w-full h-full object-contain block" alt="水位預覽(灰階)">
+                        </div>
+                    </div>
                     <button onclick="toggleWaterFS(event)" title="全螢幕" class="absolute top-2 right-2 bg-black/50 hover:bg-black/70 text-white p-2 rounded-lg z-10">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4"></path></svg>
                     </button>
                     <div id="water-tune-loading" class="absolute inset-0 bg-black/60 flex items-center justify-center text-white font-bold hidden z-20">Loading...</div>
                 </div>
+                <!-- 原圖 / 灰階 對照滑桿 -->
+                <div class="flex items-center gap-2 text-xs text-gray-500 px-1">
+                    <span class="font-bold">原圖</span>
+                    <input id="wt-wipe" type="range" min="0" max="100" value="0" class="flex-1" oninput="updateWipe()">
+                    <span class="font-bold">灰階</span>
+                </div>
                 <!-- 結果摘要 -->
                 <div class="bg-white rounded-xl p-4 border border-gray-100 text-sm space-y-1">
                     <p class="text-gray-600">狀態：<span id="wt-state" class="font-bold">--</span></p>
-                    <p class="text-gray-600">水位：<span id="wt-percent" class="font-bold">--</span> ・ gap：<span id="wt-gap" class="font-mono">--</span> px ・ 信心：<span id="wt-conf" class="font-mono">--</span></p>
+                    <p class="text-gray-600">水位：<span id="wt-percent" class="font-bold">--</span> ・ gap：<span id="wt-gap" class="font-mono">--</span> px</p>
+                    <p class="text-gray-600">邊緣強度：<span id="wt-peak" class="font-mono">--</span> ・ 信心：<span id="wt-conf" class="font-mono">--</span></p>
                     <p class="text-gray-400 text-xs">圖例：黃線=膠帶底　橘線=容許下限　綠/紅線=水面　淺藍=分析區段</p>
                 </div>
                 <!-- 可調參數 -->
@@ -242,6 +258,18 @@
                         <span class="flex items-center">擷取幀數 (1–30)<button type="button" onclick="toggleInfo('info-frames')" class="wt-i">i</button></span>
                         <input id="wt-frames" type="number" min="1" max="30" class="mt-1 border rounded-lg px-2 py-1.5 font-mono w-full">
                         <p id="info-frames" class="wt-help hidden">每次偵測連拍幾張取中值，用來消除魚游動、水波、瞬間反光。調大→更穩定但較慢;調小→較快但易受瞬時干擾。變更後需按〈重新擷取〉才生效。</p>
+                    </div>
+
+                    <div class="text-sm flex flex-col">
+                        <span class="flex items-center">灰階 Gamma (0.2–3.0)<button type="button" onclick="toggleInfo('info-gamma')" class="wt-i">i</button></span>
+                        <input id="wt-gamma" type="number" step="0.1" min="0.2" max="3.0" class="mt-1 border rounded-lg px-2 py-1.5 font-mono w-full">
+                        <p id="info-gamma" class="wt-help hidden">調整灰階明暗對比(用右側滑桿可看灰階結果)。>1→壓暗中間調，黑色膠帶更突出、與水區分更明顯;<1→整體提亮，暗部細節更清楚;=1→不調整。目的是讓膠帶與水面更容易被偵測。</p>
+                    </div>
+
+                    <div class="text-sm flex flex-col">
+                        <span class="flex items-center">水面最小邊緣強度<button type="button" onclick="toggleInfo('info-minrad')" class="wt-i">i</button></span>
+                        <input id="wt-minrad" type="number" step="0.5" min="0.5" max="50" class="mt-1 border rounded-lg px-2 py-1.5 font-mono w-full">
+                        <p id="info-minrad" class="wt-help hidden">判定「是否真的有水面線」的門檻。膠帶下方亮度變化(邊緣強度)若低於此值，代表沒有空氣/水交界→水面在膠帶處或更高→<b>判定正常滿水位</b>(這正是理想水位時的情況)。調大→更嚴格，輕微的反光紋路不會被當成水面，但水位真的略降時也可能仍判正常;調小→更敏感，能抓到較淺的水面線，但易把雜訊誤判為水面。請參考下方顯示的「邊緣強度」實際值來設定。</p>
                     </div>
                 </div>
             </div>
@@ -493,6 +521,10 @@
             // 開啟調校視窗並擷取第一組 8 幀
             document.getElementById('water-tune-modal').classList.remove('hidden');
             document.getElementById('water-tune-img').src = '';
+            document.getElementById('water-tune-gray').src = '';
+            document.getElementById('wt-wipe').value = 0;   // 預設顯示原圖
+            updateWipe();
+            wtResetZoom();
             waterTuneRequest({ recapture: true });
         }
 
@@ -515,6 +547,8 @@
                 roi_height_ratio: numOrNull('wt-roi-height'),
                 tape_margin_px: numOrNull('wt-tape-margin'),
                 frames: numOrNull('wt-frames'),
+                gray_gamma: numOrNull('wt-gamma'),
+                waterline_min_grad: numOrNull('wt-minrad'),
             };
         }
 
@@ -525,6 +559,8 @@
             document.getElementById('wt-roi-height').value = cfg.roi_height_ratio ?? '';
             document.getElementById('wt-tape-margin').value = cfg.tape_margin_px ?? '';
             document.getElementById('wt-frames').value = cfg.frames ?? '';
+            document.getElementById('wt-gamma').value = cfg.gray_gamma ?? '';
+            document.getElementById('wt-minrad').value = cfg.waterline_min_grad ?? '';
         }
 
         function renderTuneResult(result) {
@@ -536,6 +572,7 @@
             document.getElementById('wt-percent').innerText = (result.percent ?? '--') + (result.percent != null ? '%' : '');
             document.getElementById('wt-gap').innerText = result.gap_px ?? '--';
             document.getElementById('wt-conf').innerText = result.confidence ?? '--';
+            document.getElementById('wt-peak').innerText = result.peak_grad ?? '--';
         }
 
         async function waterTuneRequest(payload) {
@@ -553,6 +590,7 @@
                     return;
                 }
                 if (data.image) document.getElementById('water-tune-img').src = 'data:image/jpeg;base64,' + data.image;
+                if (data.gray_image) document.getElementById('water-tune-gray').src = 'data:image/jpeg;base64,' + data.gray_image;
                 renderTuneResult(data.result || {});
                 fillTuneForm(data.config || {});
             } catch (e) {
@@ -575,18 +613,88 @@
             document.getElementById(id).classList.toggle('hidden');
         }
 
+        // 原圖 / 灰階 對照滑桿
+        function updateWipe() {
+            const v = document.getElementById('wt-wipe').value;
+            document.getElementById('wt-gray-layer').style.clipPath = `inset(0 ${100 - v}% 0 0)`;
+        }
+
+        // --- 預覽圖縮放/拖曳/全螢幕（比照攝影機畫面）---
+        const wtWrap = document.getElementById('wt-img-wrap');
+        const wtZoom = document.getElementById('wt-zoom');
+        let wtScale = 1, wtTX = 0, wtTY = 0, wtDrag = false, wtSX = 0, wtSY = 0, wtDist = 0, wtStartScale = 1;
+
+        function wtUpdateTransform() {
+            if (wtScale <= 1) {
+                wtScale = 1; wtTX = 0; wtTY = 0;
+            } else {
+                const r = wtWrap.getBoundingClientRect();
+                const maxW = (r.width * wtScale - r.width) / 2;
+                const maxH = (r.height * wtScale - r.height) / 2;
+                wtTX = Math.min(Math.max(wtTX, -maxW), maxW);
+                wtTY = Math.min(Math.max(wtTY, -maxH), maxH);
+            }
+            wtZoom.style.transform = `translate(${wtTX}px, ${wtTY}px) scale(${wtScale})`;
+        }
+
+        function wtResetZoom() { wtScale = 1; wtTX = 0; wtTY = 0; wtUpdateTransform(); }
+
+        wtWrap.addEventListener('wheel', (e) => {
+            if (e.ctrlKey || e.metaKey) {
+                e.preventDefault();
+                wtScale = Math.min(Math.max(1, wtScale + e.deltaY * -0.001), 4);
+                wtUpdateTransform();
+            }
+        }, { passive: false });
+
+        wtWrap.addEventListener('mousedown', (e) => {
+            if (wtScale > 1) { wtDrag = true; wtSX = e.pageX - wtTX; wtSY = e.pageY - wtTY; }
+        });
+        window.addEventListener('mousemove', (e) => {
+            if (wtDrag && wtScale > 1) { wtTX = e.pageX - wtSX; wtTY = e.pageY - wtSY; wtUpdateTransform(); }
+        });
+        window.addEventListener('mouseup', () => { wtDrag = false; });
+
+        wtWrap.addEventListener('touchstart', (e) => {
+            if (e.target.id === 'wt-wipe') return;   // 滑桿不觸發縮放
+            if (e.touches.length === 1 && wtScale > 1) {
+                wtDrag = true; wtSX = e.touches[0].pageX - wtTX; wtSY = e.touches[0].pageY - wtTY;
+            } else if (e.touches.length === 2) {
+                wtDrag = false;
+                wtDist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
+                wtStartScale = wtScale;
+            }
+        }, { passive: false });
+
+        wtWrap.addEventListener('touchmove', (e) => {
+            if (e.touches.length === 1 && wtDrag) {
+                e.preventDefault();
+                wtTX = e.touches[0].pageX - wtSX; wtTY = e.touches[0].pageY - wtSY; wtUpdateTransform();
+            } else if (e.touches.length === 2) {
+                e.preventDefault();
+                const d = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
+                if (wtDist > 0) { wtScale = Math.min(Math.max(1, wtStartScale * (d / wtDist)), 4); wtUpdateTransform(); }
+            }
+        }, { passive: false });
+
+        wtWrap.addEventListener('touchend', (e) => { if (e.touches.length === 0) { wtDrag = false; wtDist = 0; } });
+
         async function toggleWaterFS(e) {
             e.stopPropagation();
-            const wrap = document.getElementById('wt-img-wrap');
             if (!document.fullscreenElement) {
                 try {
-                    if (wrap.requestFullscreen) await wrap.requestFullscreen();
-                    else if (wrap.webkitRequestFullscreen) await wrap.webkitRequestFullscreen();
+                    if (wtWrap.requestFullscreen) await wtWrap.requestFullscreen();
+                    else if (wtWrap.webkitRequestFullscreen) await wtWrap.webkitRequestFullscreen();
+                    if (screen.orientation && screen.orientation.lock) await screen.orientation.lock('landscape').catch(() => {});
                 } catch (err) { console.error(err); }
             } else {
                 if (document.exitFullscreen) document.exitFullscreen();
+                wtResetZoom();
             }
         }
+
+        // 退出全螢幕（含 ESC）時重置預覽縮放
+        document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement) wtResetZoom(); });
 
         function renderList() {
             const list = document.getElementById('schedule-list');

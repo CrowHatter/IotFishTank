@@ -16,11 +16,11 @@ class WaterLevelDetector:
 
     # 可由 config 調整的參數鍵（供前端調校 UI 使用）
     TUNABLE_KEYS = ('roi_x', 'gap_threshold_px', 'roi_height_ratio',
-                    'tape_margin_px', 'frames')
+                    'tape_margin_px', 'frames', 'gray_gamma', 'waterline_min_grad')
 
     def __init__(self, camera, roi_x=None, gap_threshold_px=25,
                  tape_bottom_ref=None, frames=8, roi_height_ratio=0.25,
-                 tape_margin_px=6):
+                 tape_margin_px=6, gray_gamma=1.0, waterline_min_grad=4.0):
         self.camera = camera
         self.roi_x = tuple(roi_x) if roi_x else None      # (x1, x2)；None = 全寬
         self.gap_threshold_px = gap_threshold_px
@@ -29,6 +29,10 @@ class WaterLevelDetector:
         self.roi_height_ratio = roi_height_ratio
         # 膠帶底緣本身是強邊；跳過此 margin 後再找水面線，避免誤鎖膠帶邊緣
         self.tape_margin_px = tape_margin_px
+        # 灰階 gamma：>1 壓暗中間調(膠帶更突出)、<1 提亮；=1 不調整
+        self.gray_gamma = gray_gamma
+        # ROI 內最大梯度低於此值即視為「無水面線」→ 水面在膠帶處或更高 → 正常
+        self.waterline_min_grad = waterline_min_grad
 
     # --- X 區段 ---
     def _x_bounds(self, width):
@@ -64,6 +68,14 @@ class WaterLevelDetector:
         grays = [cv2.cvtColor(f, cv2.COLOR_BGR2GRAY) for f in frames]
         return np.median(np.stack(grays, axis=0), axis=0).astype(np.uint8)
 
+    def _process_gray(self, gray):
+        """套用灰階 gamma 調整（gamma=1 時原樣回傳）。"""
+        g = float(self.gray_gamma)
+        if abs(g - 1.0) < 1e-3:
+            return gray
+        lut = np.clip((np.arange(256) / 255.0) ** g * 255.0, 0, 255).astype(np.uint8)
+        return cv2.LUT(gray, lut)
+
     # --- 偵測核心 ---
     def _find_tape_bottom(self, col):
         """col: (H, W') 灰階區段。找頂部深色膠帶的底緣 row，找不到回 None。"""
@@ -84,13 +96,13 @@ class WaterLevelDetector:
 
     def _find_waterline(self, col, tape_bottom):
         """在 tape_bottom 下方 ROI 內找水面線（最大垂直梯度 row）。
-        回傳 (waterline_row, confidence)，找不到回 (None, 0.0)。"""
+        回傳 (waterline_row, confidence, peak_grad)，ROI 太小回 (None, 0.0, 0.0)。"""
         h = col.shape[0]
         roi_h = int(h * self.roi_height_ratio)
         top = tape_bottom + self.tape_margin_px
         bottom = min(h, top + roi_h)
         if bottom - top < 5:
-            return None, 0.0
+            return None, 0.0, 0.0
         roi = col[top:bottom]
         row_mean = roi.mean(axis=1)
         # 邊緣補值的 3 點移動平均（避免 convolve 'same' 在 ROI 邊界產生假梯度）
@@ -98,12 +110,12 @@ class WaterLevelDetector:
         smooth = (pad[:-2] + pad[1:-1] + pad[2:]) / 3.0
         grad = np.abs(np.diff(smooth))
         if grad.size == 0:
-            return None, 0.0
+            return None, 0.0, 0.0
         idx = int(np.argmax(grad))
         peak = float(grad[idx])
         mean_grad = float(grad.mean()) + 1e-6
         confidence = min(1.0, peak / (mean_grad * 6.0))
-        return int(top + idx), round(confidence, 3)
+        return int(top + idx), round(confidence, 3), round(peak, 2)
 
     @staticmethod
     def _percent_from_waterline(waterline, height):
@@ -121,12 +133,20 @@ class WaterLevelDetector:
             return {"state": "unknown", "reason": "no_tape",
                     "gap_px": None, "percent": None,
                     "tape_bottom": None, "waterline": None, "confidence": 0.0}
-        waterline, confidence = self._find_waterline(col, tape_bottom)
-        if waterline is None:
-            return {"state": "unknown", "reason": "no_waterline",
-                    "gap_px": None, "percent": None,
-                    "tape_bottom": int(tape_bottom), "waterline": None,
-                    "confidence": 0.0}
+        waterline, confidence, peak = self._find_waterline(col, tape_bottom)
+        # 找不到明顯水面線（ROI 內梯度不足）→ 水面在膠帶處或更高 → 視為正常滿水位。
+        # 這正是理想水位（水面幾乎切齊膠帶底）的情況：膠帶下方全是水，沒有空氣/水交界。
+        if waterline is None or peak < self.waterline_min_grad:
+            return {
+                "state": "ok",
+                "gap_px": 0,
+                "percent": 100,
+                "tape_bottom": int(tape_bottom),
+                "waterline": None,
+                "confidence": confidence,
+                "peak_grad": peak,
+                "reason": "waterline_at_tape",
+            }
         gap_px = waterline - tape_bottom
         state = "ok" if gap_px <= self.gap_threshold_px else "low"
         return {
@@ -136,6 +156,7 @@ class WaterLevelDetector:
             "tape_bottom": int(tape_bottom),
             "waterline": int(waterline),
             "confidence": confidence,
+            "peak_grad": peak,
             "reason": None,
         }
 
@@ -146,14 +167,26 @@ class WaterLevelDetector:
         if gray is None:
             return {"state": "unknown", "reason": "no_frame",
                     "gap_px": None, "percent": None}
-        return self._analyze(gray)
+        return self._analyze(self._process_gray(gray))
 
     def analyze_frames(self, frames):
         """對一組已擷取的 BGR frame 偵測（供調校時對固定幀重複分析）。"""
         if not frames:
             return {"state": "unknown", "reason": "no_frame",
                     "gap_px": None, "percent": None}
-        return self._analyze(self.median_gray_from_frames(frames))
+        proc = self._process_gray(self.median_gray_from_frames(frames))
+        return self._analyze(proc)
+
+    def analyze_and_render(self, frames):
+        """調校用：回傳 (result, 彩色標註圖, 灰階標註圖)。兩張圖都畫上參照線。"""
+        if not frames:
+            return ({"state": "unknown", "reason": "no_frame",
+                     "gap_px": None, "percent": None}, None, None)
+        proc = self._process_gray(self.median_gray_from_frames(frames))
+        result = self._analyze(proc)
+        color_img = self.annotate(frames[0], result)
+        gray_img = self.annotate(cv2.cvtColor(proc, cv2.COLOR_GRAY2BGR), result)
+        return result, color_img, gray_img
 
     def detect_from_image(self, gray_or_bgr):
         """測試用：直接餵一張影像（BGR 或灰階 numpy）。"""

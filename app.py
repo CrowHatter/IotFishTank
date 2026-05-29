@@ -43,6 +43,8 @@ def _init_water_detector():
     water_detector.roi_height_ratio = cfg.get('roi_height_ratio', 0.25)
     water_detector.tape_margin_px = cfg.get('tape_margin_px', 6)
     water_detector.frames = cfg.get('frames', 8)
+    water_detector.gray_gamma = cfg.get('gray_gamma', 1.0)
+    water_detector.waterline_min_grad = cfg.get('waterline_min_grad', 4.0)
 scheduler = APScheduler()
 file_lock = threading.Lock()
 
@@ -141,6 +143,10 @@ def _sanitize_water_cfg(raw):
         out['tape_margin_px'] = max(0, int(raw['tape_margin_px']))
     if 'frames' in raw:
         out['frames'] = min(30, max(1, int(raw['frames'])))
+    if 'gray_gamma' in raw:
+        out['gray_gamma'] = float(min(3.0, max(0.2, float(raw['gray_gamma']))))
+    if 'waterline_min_grad' in raw:
+        out['waterline_min_grad'] = float(min(50.0, max(0.5, float(raw['waterline_min_grad']))))
     return out
 
 # --- 基礎檔案處理 ---
@@ -285,7 +291,8 @@ if not os.path.exists(CONFIG_FILE):
         "auto_water_level": [],
         "water_level_config": {
             "roi_x": None, "gap_threshold_px": 25, "tape_bottom_ref": None,
-            "roi_height_ratio": 0.25, "tape_margin_px": 6, "frames": 8
+            "roi_height_ratio": 0.25, "tape_margin_px": 6, "frames": 8,
+            "gray_gamma": 1.0, "waterline_min_grad": 4.0
         },
         "device_status": {
             "light": "off", "last_fed_A": "Never", "last_fed_B": "Never",
@@ -299,7 +306,8 @@ if not os.path.exists(CONFIG_FILE):
 def _ensure_water_config():
     defaults = {
         "roi_x": None, "gap_threshold_px": 25, "tape_bottom_ref": None,
-        "roi_height_ratio": 0.25, "tape_margin_px": 6, "frames": 8
+        "roi_height_ratio": 0.25, "tape_margin_px": 6, "frames": 8,
+        "gray_gamma": 1.0, "waterline_min_grad": 4.0
     }
     def _update(cfg):
         wlc = {**defaults, **cfg.get('water_level_config', {})}
@@ -451,15 +459,18 @@ def water_level_tune():
     if not frames:
         return jsonify({"status": "error", "reason": "no_frame"}), 503
 
-    result = water_detector.analyze_frames(frames)
-    annotated = water_detector.annotate(frames[0], result)
-    ok, buf = cv2.imencode('.jpg', annotated, [cv2.IMWRITE_JPEG_QUALITY, 80])
-    img_b64 = base64.b64encode(buf.tobytes()).decode('ascii') if ok else None
+    result, color_img, gray_img = water_detector.analyze_and_render(frames)
+
+    def _enc(img):
+        if img is None:
+            return None
+        ok, buf = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        return base64.b64encode(buf.tobytes()).decode('ascii') if ok else None
 
     _write_water_status(result)
     cfg = read_json(CONFIG_FILE).get('water_level_config', {})
-    return jsonify({"status": "success", "result": result,
-                    "config": cfg, "image": img_b64})
+    return jsonify({"status": "success", "result": result, "config": cfg,
+                    "image": _enc(color_img), "gray_image": _enc(gray_img)})
 
 @app.route('/api/water_level/calibrate', methods=['POST'])
 @login_required
