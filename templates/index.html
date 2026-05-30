@@ -91,8 +91,8 @@
             <img id="video-stream" src="/video_feed" alt="Fish Tank Live Stream">
             
             <div id="fs-controls" class="absolute top-4 right-4 flex items-center space-x-2 z-50" onclick="event.stopPropagation()">
-                <button id="btn-res" class="stream-btn" onclick="cycleStream('res')">720p ↺</button>
-                <button id="btn-fps" class="stream-btn" onclick="cycleStream('fps')">20fps ↺</button>
+                <button id="btn-res" class="stream-btn cam-a-only" onclick="cycleStream('res')">720p ↺</button>
+                <button id="btn-fps" class="stream-btn cam-a-only" onclick="cycleStream('fps')">20fps ↺</button>
                 <!-- 放大畫面餵食：點擊後出現下拉選單 -->
                 <div id="fs-feed-container" class="relative cam-a-only">
                     <button onclick="toggleFeedDropdown(event)" class="text-3xl hover:scale-110 transition-transform select-none">
@@ -778,8 +778,9 @@
             localStorage.setItem('streamRes', data.res);
             localStorage.setItem('streamFps', data.fps);
             const img = document.getElementById('video-stream');
+            const feedUrl = currentCam === 'A' ? '/video_feed' : '/video_feed_b';
             img.src = '';
-            setTimeout(() => { img.src = '/video_feed'; }, 200);
+            setTimeout(() => { img.src = feedUrl; }, 200);
         }
 
         window.addEventListener('DOMContentLoaded', () => {
