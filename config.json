@@ -63,14 +63,17 @@
     "device_status": {
         "last_fed_A": "2026-05-29 14:59",
         "last_fed_B": "2026-05-27 19:00",
-        "last_water_level_check": "2026-05-30 02:03",
+        "last_water_level_check": "2026-05-30 19:27",
         "light": "off",
         "water_level_alert": false,
         "water_level_gap_px": 0,
         "water_level_percent": 100,
         "water_level_state": "ok"
     },
-    "camera_config": {},
+    "camera_config": {
+        "A": "/dev/v4l/by-path/platform-fd500000.pcie-pci-0000:01:00.0-usb-0:1.2:1.0-video-index0",
+        "B": "/dev/v4l/by-path/platform-fd500000.pcie-pci-0000:01:00.0-usb-0:1.3:1.0-video-index0"
+    },
     "water_level_config": {
         "roi_x": [
             20,
