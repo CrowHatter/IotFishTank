@@ -12,7 +12,7 @@ from flask_apscheduler import APScheduler
 from apscheduler.triggers.cron import CronTrigger
 import atexit
 from hardware.motor_ctrl import FishFeeder
-from hardware.camera_ctrl import FishCamera
+from hardware.camera_ctrl import FishCamera, enumerate_cameras
 from hardware.light_ctrl import LightRelay
 from hardware.water_level import WaterLevelDetector
 
@@ -29,13 +29,20 @@ feeder_a = FishFeeder(pins=[17, 18, 27, 22])
 # 餵食器 B (新腳位，請根據實體接線修改)
 feeder_b = FishFeeder(pins=[23, 24, 25, 8])
 
-fish_cam = FishCamera()
+# 佔位符，稍後在 _init_cameras() 時設定
+fish_cam = None
+fish_cam_b = None
+
 light_relay = LightRelay()
 atexit.register(light_relay.cleanup)
 
 # 水位偵測器：參數於 config 載入後再套用（見下方 _init_water_detector）
-water_detector = WaterLevelDetector(fish_cam)
+water_detector = None
 def _init_water_detector():
+    global water_detector
+    if fish_cam is None:
+        return
+    water_detector = WaterLevelDetector(fish_cam)
     cfg = read_json(CONFIG_FILE).get('water_level_config', {})
     water_detector.roi_x = tuple(cfg['roi_x']) if cfg.get('roi_x') else None
     water_detector.gap_threshold_px = cfg.get('gap_threshold_px', 25)
@@ -113,12 +120,16 @@ def _write_water_status(result):
 
 def perform_water_level_check():
     """即時擷取多幀偵測，寫回 device_status，回傳結果 dict。"""
+    if water_detector is None:
+        return {'state': 'unknown', 'reason': '水位偵測器未初始化'}
     result = water_detector.detect()
     _write_water_status(result)
     return result
 
 def _capture_water_frames(n):
     frames = []
+    if fish_cam is None:
+        return frames
     for _ in range(n):
         f = fish_cam.get_raw_frame()
         if f is not None:
@@ -253,7 +264,10 @@ scheduler.init_app(app)
 scheduler.start()
 
 # --- 影像串流產生器 ---
-def gen_frames():
+def gen_frames(camera=None):
+    """回傳指定攝影機的 MJPEG 幀串流。camera 為 None 時用 fish_cam。"""
+    if camera is None:
+        camera = fish_cam
     last = 0.0
     while True:
         fps = FPS_CYCLE[stream_fps_idx]
@@ -262,7 +276,7 @@ def gen_frames():
         if now - last < interval:
             time.sleep(0.005)
             continue
-        frame, content_type = fish_cam.get_frame()
+        frame, content_type = camera.get_frame()
         if frame is None:
             time.sleep(0.1)
             continue
@@ -302,6 +316,69 @@ if not os.path.exists(CONFIG_FILE):
     }
     write_json(CONFIG_FILE, default_config)
 
+# 攝影機分配邏輯：首次自動分配 A/B，之後用 by-path 綁定固定
+def _init_cameras():
+    global fish_cam, fish_cam_b
+    try:
+        cameras = enumerate_cameras()
+    except Exception as e:
+        print(f"[Camera Init] enumerate_cameras 失敗: {e}")
+        cameras = []
+
+    with file_lock:
+        config = read_json(CONFIG_FILE)
+
+    camera_config = config.get('camera_config', {})
+    assigned_indices = {}
+
+    if not camera_config:
+        # 首次初始化：按順序分配 A、B
+        if len(cameras) >= 1:
+            assigned_indices['A'] = cameras[0]['index']
+            camera_config['A'] = cameras[0]['by_path'] or f"video{cameras[0]['index']}"
+        if len(cameras) >= 2:
+            assigned_indices['B'] = cameras[1]['index']
+            camera_config['B'] = cameras[1]['by_path'] or f"video{cameras[1]['index']}"
+
+        if assigned_indices:
+            try:
+                safe_update_config(lambda cfg: {
+                    **cfg,
+                    "camera_config": camera_config
+                })
+                print(f"[Camera Init] 首次初始化: A={assigned_indices.get('A')}, B={assigned_indices.get('B')}")
+            except Exception as e:
+                print(f"[Camera Init] 保存 camera_config 失敗: {e}")
+    else:
+        # 已有紀錄：用 by-path 比對找到對應的 index
+        for cam_id in ['A', 'B']:
+            by_path = camera_config.get(cam_id)
+            if by_path:
+                found = False
+                for cam in cameras:
+                    if cam['by_path'] == by_path or (cam['by_path'] is None and by_path == f"video{cam['index']}"):
+                        assigned_indices[cam_id] = cam['index']
+                        found = True
+                        break
+                if not found:
+                    print(f"[Camera Init] 無法找到攝影機 {cam_id} (by_path={by_path})")
+
+    if 'A' in assigned_indices:
+        try:
+            fish_cam = FishCamera(device_index=assigned_indices['A'])
+            print(f"[Camera Init] 攝影機 A 初始化成功 (index={assigned_indices['A']})")
+        except Exception as e:
+            print(f"[Camera Init] 攝影機 A 初始化失敗: {e}")
+            fish_cam = None
+
+    if 'B' in assigned_indices:
+        try:
+            fish_cam_b = FishCamera(device_index=assigned_indices['B'])
+            print(f"[Camera Init] 攝影機 B 初始化成功 (index={assigned_indices['B']})")
+        except Exception as e:
+            print(f"[Camera Init] 攝影機 B 初始化失敗: {e}")
+            fish_cam_b = None
+
 # 確保既有 config.json 也有水位設定欄位（舊檔可能缺少），缺則補上預設值
 def _ensure_water_config():
     defaults = {
@@ -319,6 +396,8 @@ def _ensure_water_config():
     safe_update_config(_update)
 
 _ensure_water_config()
+# 初始化攝影機
+_init_cameras()
 # 套用 config 中的水位偵測參數
 _init_water_detector()
 
@@ -371,13 +450,33 @@ def index():
 @app.route('/video_feed')
 @login_required
 def video_feed():
+    if fish_cam is None:
+        return "攝影機 A 未連接", 404
     return Response(gen_frames(),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
+
+@app.route('/video_feed_b')
+@login_required
+def video_feed_b():
+    if fish_cam_b is None:
+        return "攝影機 B 未連接", 404
+    return Response(gen_frames(fish_cam_b),
+                    mimetype='multipart/x-mixed-replace; boundary=frame')
+
+@app.route('/api/cameras', methods=['GET'])
+@login_required
+def get_cameras():
+    return jsonify({
+        "A": {"available": fish_cam is not None},
+        "B": {"available": fish_cam_b is not None}
+    })
 
 @app.route('/api/stream_setting', methods=['POST'])
 @login_required
 def stream_setting():
     global stream_res_idx, stream_fps_idx
+    if fish_cam is None:
+        return jsonify({'error': '攝影機未連接'}), 503
     setting_type = request.json.get('type')
     with stream_lock:
         if setting_type == 'res':
@@ -439,6 +538,9 @@ def water_level_tune():
     - 否則沿用暫存的同一組幀重新分析
     回傳：標註後影像(base64 JPEG)、偵測結果、目前 config。"""
     global _water_frames
+    if water_detector is None or fish_cam is None:
+        return jsonify({"status": "error", "reason": "水位偵測器未初始化"}), 503
+
     body = request.json or {}
 
     new_cfg = body.get('config')
@@ -475,6 +577,8 @@ def water_level_tune():
 @app.route('/api/water_level/calibrate', methods=['POST'])
 @login_required
 def water_level_calibrate():
+    if water_detector is None:
+        return jsonify({"status": "error", "reason": "水位偵測器未初始化"}), 503
     cal = water_detector.calibrate()
     if not cal.get('ok'):
         return jsonify({"status": "error", "reason": cal.get('reason')}), 400

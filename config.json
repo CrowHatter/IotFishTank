@@ -70,6 +70,7 @@
         "water_level_percent": 100,
         "water_level_state": "ok"
     },
+    "camera_config": {},
     "water_level_config": {
         "roi_x": [
             20,

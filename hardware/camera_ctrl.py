@@ -2,20 +2,56 @@ import cv2
 import time
 import os
 import threading
+import subprocess
+
+def enumerate_cameras():
+    """
+    掃描 /dev/video0~9，找出所有可用的攝影機及其 by-path。
+    回傳 list of {"index": N, "by_path": "..."} 依 index 升序排列。
+    """
+    cameras = []
+    for i in range(10):
+        try:
+            cap = cv2.VideoCapture(i, cv2.CAP_V4L2)
+            if cap.isOpened():
+                ret, frame = cap.read()
+                if ret and frame is not None:
+                    by_path = _get_device_by_path(i)
+                    cameras.append({"index": i, "by_path": by_path})
+                cap.release()
+        except Exception as e:
+            continue
+    return cameras
+
+def _get_device_by_path(index):
+    """
+    取得 /dev/videoN 對應的 /dev/v4l/by-path/ symlink（如果存在）。
+    沒有的話回傳 None。
+    """
+    try:
+        for entry in os.listdir('/dev/v4l/by-path'):
+            link_path = f'/dev/v4l/by-path/{entry}'
+            if os.path.islink(link_path):
+                target = os.path.realpath(link_path)
+                if target == f'/dev/video{index}':
+                    return link_path
+    except Exception:
+        pass
+    return None
 
 class FishCamera:
-    def __init__(self):
+    def __init__(self, device_index=0):
         self.cap = None
         self.quality = 80
         self.output_size = (1280, 720)
         self._cam_lock = threading.Lock()
+        self.device_index = device_index
         self.discover_camera()
 
     def discover_camera(self):
-        # 根據測試結果，鎖定 /dev/video0
-        index = 0
+        index = self.device_index
         print(f"--- [Camera] 執行系統層級 V4L2 重置 (/dev/video{index}) ---")
-        
+
         # 先透過系統指令強迫設定格式與解析度
         os.system(f"v4l2-ctl -d /dev/video{index} --set-fmt-video=width=1920,height=1080,pixelformat=MJPG")
         

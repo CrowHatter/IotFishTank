@@ -60,13 +60,21 @@
         .day-btn.active { background-color: #2563eb; color: white; border-color: #2563eb; font-weight: bold; }
         .stream-btn { background: rgba(0,0,0,0.45); color: #fff; font-size: 0.7rem; font-weight: 700; padding: 0.2rem 0.5rem; border-radius: 0.4rem; cursor: pointer; transition: background 0.15s; white-space: nowrap; border: none; }
         .stream-btn:hover { background: rgba(255,255,255,0.25); }
+        .cam-drawer { position: fixed; top: 0; right: 0; height: 100%; width: 14rem; background: #1f2937; z-index: 50; transform: translateX(100%); transition: transform 0.3s ease-out; }
+        .cam-drawer.open { transform: translateX(0); }
+        .cam-drawer-overlay { position: fixed; inset: 0; z-index: 40; background: rgba(0,0,0,0.5); opacity: 0; transition: opacity 0.3s; pointer-events: none; }
+        .cam-drawer-overlay.open { opacity: 1; pointer-events: auto; }
+        .cam-btn { width: 100%; padding: 1rem; text-align: left; background: transparent; color: white; border: none; border-bottom: 1px solid #374151; cursor: pointer; transition: background 0.2s; font-weight: bold; }
+        .cam-btn:hover { background: #374151; }
+        .cam-btn.active { background: #2563eb; }
+        .cam-a-only { /* 為 B 攝影機時隱藏 */ }
     </style>
 </head>
 <body class="bg-gray-100 font-sans">
 
     <div class="app-banner">
         <div class="flex items-center gap-3">
-            <img src="/static/resource/icon.png" class="banner-icon" alt="FishTank Icon">
+            <img id="banner-icon-btn" src="/static/resource/icon.png" class="banner-icon cursor-pointer hover:opacity-80 transition-opacity" alt="FishTank Icon" onclick="toggleCamDrawer()">
             <h1 class="text-lg font-bold tracking-wider">智慧魚缸監控中心</h1>
         </div>
         <div class="flex items-center gap-2 text-[10px] sm:text-xs opacity-90 font-medium">
@@ -86,7 +94,7 @@
                 <button id="btn-res" class="stream-btn" onclick="cycleStream('res')">720p ↺</button>
                 <button id="btn-fps" class="stream-btn" onclick="cycleStream('fps')">20fps ↺</button>
                 <!-- 放大畫面餵食：點擊後出現下拉選單 -->
-                <div id="fs-feed-container" class="relative">
+                <div id="fs-feed-container" class="relative cam-a-only">
                     <button onclick="toggleFeedDropdown(event)" class="text-3xl hover:scale-110 transition-transform select-none">
                         <span id="icon-feed">🍖</span>
                     </button>
@@ -96,7 +104,7 @@
                         <button onclick="selectFeed(event,'both')" class="flex items-center gap-2 w-full px-4 py-2.5 hover:bg-white/20 active:bg-white/30 font-bold border-t border-white/10">🍖 <span>Both</span></button>
                     </div>
                 </div>
-                <button id="btn-light-icon" onclick="toggleLight()" class="hover:scale-110 transition-transform">
+                <button id="btn-light-icon" onclick="toggleLight()" class="hover:scale-110 transition-transform cam-a-only">
                     <img id="icon-light" src="/static/resource/light_off.png" class="w-8 h-8 object-contain">
                 </button>
             </div>
@@ -125,12 +133,12 @@
             <button onclick="openManager('auto_water_change')" class="bg-white border border-gray-100 py-4 rounded-xl font-bold shadow-sm hover:shadow-md transition-all active:scale-95 text-gray-700">💧 換水排程管理</button>
             <button onclick="openManager('auto_light')" class="bg-white border border-gray-100 py-4 rounded-xl font-bold shadow-sm hover:shadow-md transition-all active:scale-95 text-gray-700 col-span-2">💡 燈光排程管理</button>
             <button id="main-btn-water-check" onclick="checkWaterLevel()" class="bg-white border border-gray-100 py-4 rounded-xl font-bold shadow-sm hover:shadow-md transition-all active:scale-95 text-gray-700 col-span-2"><span id="main-text-water-check">🌊 檢查水位</span></button>
-            <button id="main-btn-light" onclick="toggleLight()" class="bg-gray-800 text-white py-4 rounded-xl font-black shadow-md flex items-center justify-center transition-all active:scale-95">
+            <button id="main-btn-light" onclick="toggleLight()" class="bg-gray-800 text-white py-4 rounded-xl font-black shadow-md flex items-center justify-center transition-all active:scale-95 cam-a-only">
                 <img id="main-icon-light" src="/static/resource/light_off.png" class="w-5 h-5 mr-2 object-contain">
                 <span id="main-text-light">開啟燈光</span>
             </button>
-            <!-- 普通畫面餵食：直接三選一 -->
-            <div class="grid grid-cols-3 gap-2">
+            <!-- 普通畫面餵食：直接三選一 (魚缸 A 專用) -->
+            <div class="grid grid-cols-3 gap-2 cam-a-only">
                 <button id="main-btn-feed-A" onclick="triggerFeed('A')" class="bg-red-600 text-white py-4 rounded-xl font-black shadow-md transition-all active:scale-95 disabled:opacity-50">
                     <span id="main-text-feed-A">🍖 A</span>
                 </button>
@@ -785,6 +793,63 @@
             const img = document.getElementById('video-stream');
             img.src = document.hidden ? '' : '/video_feed';
         });
+
+        // --- 攝影機切換 ---
+        let currentCam = 'A';
+
+        async function initCameras() {
+            try {
+                const res = await fetch('/api/cameras');
+                const data = await res.json();
+                const camBAvailable = data.B?.available || false;
+                const bannerIcon = document.getElementById('banner-icon-btn');
+                if (!camBAvailable) {
+                    bannerIcon.style.cursor = 'default';
+                    bannerIcon.style.opacity = '0.5';
+                    bannerIcon.onclick = null;
+                }
+            } catch (e) {
+                console.error('Failed to load camera info:', e);
+            }
+        }
+
+        function toggleCamDrawer() {
+            const drawer = document.getElementById('cam-drawer');
+            const overlay = document.getElementById('cam-drawer-overlay');
+            drawer?.classList.toggle('open');
+            overlay?.classList.toggle('open');
+        }
+
+        function closeCamDrawer() {
+            const drawer = document.getElementById('cam-drawer');
+            const overlay = document.getElementById('cam-drawer-overlay');
+            drawer?.classList.remove('open');
+            overlay?.classList.remove('open');
+        }
+
+        function switchCam(cam) {
+            currentCam = cam;
+            const img = document.getElementById('video-stream');
+            img.src = cam === 'A' ? '/video_feed' : '/video_feed_b';
+            document.querySelectorAll('.cam-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.cam === cam);
+            });
+            document.querySelectorAll('.cam-a-only').forEach(el => {
+                el.style.display = cam === 'A' ? '' : 'none';
+            });
+            closeCamDrawer();
+            loadConfig();
+        }
+
+        initCameras();
     </script>
+
+    <!-- 右側攝影機切換抽屜 -->
+    <div id="cam-drawer" class="cam-drawer">
+        <div class="p-4 font-bold text-white text-lg border-b border-gray-600">選擇魚缸</div>
+        <button class="cam-btn active" data-cam="A" onclick="switchCam('A')">🐟 魚缸 A</button>
+        <button class="cam-btn" data-cam="B" onclick="switchCam('B')">🐠 魚缸 B</button>
+    </div>
+    <div id="cam-drawer-overlay" class="cam-drawer-overlay" onclick="closeCamDrawer()"></div>
 </body>
 </html>
