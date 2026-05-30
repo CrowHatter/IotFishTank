@@ -486,7 +486,10 @@ def stream_setting():
             stream_fps_idx = (stream_fps_idx + 1) % len(FPS_CYCLE)
         else:
             return jsonify({'error': 'invalid type'}), 400
+        # 解析度/幀數為 A、B 共用設定，兩台都套用
         fish_cam.set_output(RES_CYCLE[stream_res_idx], 80)
+        if fish_cam_b is not None:
+            fish_cam_b.set_output(RES_CYCLE[stream_res_idx], 80)
     return jsonify({'res': RES_LABELS[stream_res_idx], 'fps': FPS_LABELS[stream_fps_idx]})
 
 @app.route('/api/config', methods=['GET'])
