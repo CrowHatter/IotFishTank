@@ -63,7 +63,6 @@ FPS_LABELS = ['30fps', '20fps', '10fps']
 stream_res_idx = 1   # 預設 720p
 stream_fps_idx = 1   # 預設 20fps
 stream_lock = threading.Lock()
-fish_cam.set_output((1280, 720), 80)
 
 # --- 2. 輔助函式：餵食邏輯 ---
 def perform_feed(target='both'):
@@ -366,6 +365,7 @@ def _init_cameras():
     if 'A' in assigned_indices:
         try:
             fish_cam = FishCamera(device_index=assigned_indices['A'])
+            fish_cam.set_output((1280, 720), 80)
             print(f"[Camera Init] 攝影機 A 初始化成功 (index={assigned_indices['A']})")
         except Exception as e:
             print(f"[Camera Init] 攝影機 A 初始化失敗: {e}")
@@ -374,6 +374,7 @@ def _init_cameras():
     if 'B' in assigned_indices:
         try:
             fish_cam_b = FishCamera(device_index=assigned_indices['B'])
+            fish_cam_b.set_output((1280, 720), 80)
             print(f"[Camera Init] 攝影機 B 初始化成功 (index={assigned_indices['B']})")
         except Exception as e:
             print(f"[Camera Init] 攝影機 B 初始化失敗: {e}")

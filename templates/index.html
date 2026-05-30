@@ -791,7 +791,12 @@
 
         document.addEventListener('visibilitychange', () => {
             const img = document.getElementById('video-stream');
-            img.src = document.hidden ? '' : '/video_feed';
+            if (document.hidden) {
+                img.src = '';
+            } else {
+                const feedUrl = currentCam === 'A' ? '/video_feed' : '/video_feed_b';
+                img.src = feedUrl;
+            }
         });
 
         // --- 攝影機切換 ---
@@ -800,9 +805,17 @@
         async function initCameras() {
             try {
                 const res = await fetch('/api/cameras');
+                if (!res.ok) {
+                    console.warn('Failed to fetch /api/cameras:', res.status);
+                    return;
+                }
                 const data = await res.json();
-                const camBAvailable = data.B?.available || false;
+                const camBAvailable = data?.B?.available || false;
                 const bannerIcon = document.getElementById('banner-icon-btn');
+                if (!bannerIcon) {
+                    console.warn('banner-icon-btn not found');
+                    return;
+                }
                 if (!camBAvailable) {
                     bannerIcon.style.cursor = 'default';
                     bannerIcon.style.opacity = '0.5';
@@ -830,7 +843,9 @@
         function switchCam(cam) {
             currentCam = cam;
             const img = document.getElementById('video-stream');
-            img.src = cam === 'A' ? '/video_feed' : '/video_feed_b';
+            const feedUrl = cam === 'A' ? '/video_feed' : '/video_feed_b';
+            img.src = '';
+            setTimeout(() => { img.src = feedUrl; }, 200);
             document.querySelectorAll('.cam-btn').forEach(btn => {
                 btn.classList.toggle('active', btn.dataset.cam === cam);
             });
@@ -841,7 +856,9 @@
             loadConfig();
         }
 
-        initCameras();
+        window.addEventListener('DOMContentLoaded', () => {
+            setTimeout(initCameras, 500);
+        });
     </script>
 
     <!-- 右側攝影機切換抽屜 -->
