@@ -207,15 +207,23 @@ def is_ip_banned(ip):
     return False, None
 
 # --- 排程背景任務 ---
-def check_schedule():
+def check_schedule(source='cron'):
     with app.app_context():
         with file_lock:
             config = read_json(CONFIG_FILE)
-        
+
         now = datetime.now()
-        now_time = now.strftime("%H:%M")
         now_day = int(now.strftime("%w"))
-        
+        if source == 'cron':
+            # 對齊到 10 分鐘排程槽：即使任務因 worker 忙碌被延後執行（甚至跨過整分鐘），
+            # 仍能對上該時槽的排程，避免精確比對因延遲而整個錯過。
+            slot = now.replace(minute=(now.minute // 10) * 10, second=0, microsecond=0)
+            now_time = slot.strftime("%H:%M")
+        else:
+            # 手動存檔觸發：維持精確比對，避免存檔當下誤觸發鄰近時槽的排程。
+            now_time = now.strftime("%H:%M")
+        print(f"[{now.strftime('%H:%M:%S')}] check_schedule 觸發 (source={source}, 比對時槽={now_time})")
+
         schedules = config.get('auto_feed', [])
         for item in schedules:
             if item.get('enabled') and item.get('time') == now_time:
@@ -255,9 +263,14 @@ def check_schedule():
                     break
 
 scheduler.add_job(
-    id='feeder_cron_job', 
-    func=check_schedule, 
-    trigger=CronTrigger(minute='0,10,20,30,40,50')
+    id='feeder_cron_job',
+    func=check_schedule,
+    trigger=CronTrigger(minute='0,10,20,30,40,50'),
+    # worker 忙於串流時任務可能延後啟動；放寬容錯時間並合併積壓的觸發，
+    # 確保 10 分鐘排程槽內一定會被執行一次（預設僅 1 秒，極易被跳過）。
+    misfire_grace_time=290,
+    coalesce=True,
+    replace_existing=True,
 )
 scheduler.init_app(app)
 scheduler.start()
@@ -505,7 +518,7 @@ def update_config():
         write_json(CONFIG_FILE, request.json)
     # 修改：不忙碌時檢查排程，確保兩台都沒在忙
     if not feeder_a.is_busy and not feeder_b.is_busy:
-        check_schedule()
+        check_schedule(source='manual')
     return jsonify({"status": "success"})
 
 @app.route('/api/action', methods=['POST'])
