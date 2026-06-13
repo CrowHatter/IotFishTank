@@ -79,6 +79,13 @@
             cursor: pointer; transition: background 0.15s; }
         .exp-label:hover { background: rgba(255,255,255,0.25); }
         .exp-label.auto { color: #6ee7b7; }
+        /* 點擊畫面切換：所有疊加按鈕往各自最近的邊緣滑出並淡出 */
+        #fs-controls, #exp-panel, #btn-fullscreen {
+            transition: transform 0.3s ease-out, opacity 0.3s ease-out;
+        }
+        #video-container.controls-hidden #fs-controls { transform: translateX(120%); opacity: 0; pointer-events: none; }
+        #video-container.controls-hidden #exp-panel  { transform: translate(-160%, -50%); opacity: 0; pointer-events: none; }
+        #video-container.controls-hidden #btn-fullscreen { transform: translateY(160%); opacity: 0; pointer-events: none; }
     </style>
 </head>
 <body class="bg-gray-100 font-sans">
@@ -128,7 +135,7 @@
                 </button>
             </div>
 
-            <button onclick="toggleFS(event)" class="absolute bottom-4 right-4 bg-black/40 text-white px-3 py-1 rounded text-sm hover:bg-black/60 z-50">
+            <button id="btn-fullscreen" onclick="toggleFS(event)" class="absolute bottom-4 right-4 bg-black/40 text-white px-3 py-1 rounded text-sm hover:bg-black/60 z-50">
                 ⛶ 全螢幕
             </button>
         </div>
@@ -431,6 +438,35 @@
                 scale = 1; updateTransform();
             }
         }
+
+        // --- 點擊畫面切換按鈕顯示/隱藏 ---
+        // 只在「單純點擊」（非拖曳、非縮放、非點到疊加按鈕）時切換。
+        let _tapStartX = 0, _tapStartY = 0, _tapMoved = false, _tapMulti = false;
+        const TAP_MOVE_TOLERANCE = 8; // px，超過視為拖曳
+
+        function _recordTapStart(x, y, isMulti) {
+            _tapStartX = x; _tapStartY = y; _tapMoved = false; _tapMulti = isMulti;
+        }
+        function _recordTapMove(x, y) {
+            if (Math.hypot(x - _tapStartX, y - _tapStartY) > TAP_MOVE_TOLERANCE) _tapMoved = true;
+        }
+
+        container.addEventListener('mousedown', (e) => _recordTapStart(e.pageX, e.pageY, false));
+        container.addEventListener('mousemove', (e) => _recordTapMove(e.pageX, e.pageY));
+        container.addEventListener('touchstart', (e) => {
+            _recordTapStart(e.touches[0].pageX, e.touches[0].pageY, e.touches.length > 1);
+        });
+        container.addEventListener('touchmove', (e) => {
+            if (e.touches.length > 1) _tapMulti = true;
+            else _recordTapMove(e.touches[0].pageX, e.touches[0].pageY);
+        });
+
+        container.addEventListener('click', (e) => {
+            // 點到疊加按鈕（已 stopPropagation）不會到這；額外保險排除 button/input
+            if (e.target.closest('button, input, #fs-controls, #exp-panel')) return;
+            if (_tapMoved || _tapMulti) return; // 拖曳/縮放不切換
+            container.classList.toggle('controls-hidden');
+        });
 
         const hourSelect = document.getElementById('new-hour');
         for(let i=1; i<=12; i++) { hourSelect.innerHTML += `<option value="${i.toString().padStart(2, '0')}">${i.toString().padStart(2, '0')}</option>`; }
