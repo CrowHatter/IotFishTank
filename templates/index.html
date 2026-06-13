@@ -68,6 +68,17 @@
         .cam-btn:hover { background: #374151; }
         .cam-btn.active { background: #2563eb; }
         .cam-a-only { /* 為 B 攝影機時隱藏 */ }
+        /* 左側縱向曝光拉桿 */
+        .exp-panel { position: absolute; left: 0.5rem; top: 50%; transform: translateY(-50%);
+            z-index: 45; display: flex; flex-direction: column; align-items: center; gap: 0.4rem;
+            background: rgba(0,0,0,0.45); padding: 0.5rem 0.35rem; border-radius: 0.5rem; }
+        .exp-slider { writing-mode: vertical-lr; direction: rtl; -webkit-appearance: slider-vertical;
+            width: 0.5rem; height: 8rem; accent-color: #9ca3af; cursor: pointer; }
+        .exp-label { color: #fff; font-size: 0.6rem; font-weight: 700; letter-spacing: 0.05em;
+            background: rgba(0,0,0,0.4); border: none; border-radius: 0.3rem; padding: 0.15rem 0.3rem;
+            cursor: pointer; transition: background 0.15s; }
+        .exp-label:hover { background: rgba(255,255,255,0.25); }
+        .exp-label.auto { color: #6ee7b7; }
     </style>
 </head>
 <body class="bg-gray-100 font-sans">
@@ -89,10 +100,18 @@
     <div class="sticky-video shadow-lg">
         <div id="video-container" class="max-w-5xl mx-auto aspect-video relative overflow-hidden bg-black">
             <img id="video-stream" src="/video_feed" alt="Fish Tank Live Stream">
-            
+
+            <!-- 左側縱向曝光拉桿（A、B 皆顯示） -->
+            <div id="exp-panel" class="exp-panel" onclick="event.stopPropagation()">
+                <input id="exp-slider" type="range" min="0" max="100" value="50" class="exp-slider"
+                       oninput="onExposureInput(this.value)">
+                <button id="exp-auto-btn" class="exp-label auto" onclick="resetExposure()">AUTO</button>
+            </div>
+
             <div id="fs-controls" class="absolute top-4 right-4 flex items-center space-x-2 z-50" onclick="event.stopPropagation()">
                 <button id="btn-res" class="stream-btn" onclick="cycleStream('res')">720p ↺</button>
                 <button id="btn-fps" class="stream-btn" onclick="cycleStream('fps')">20fps ↺</button>
+                <button id="btn-cam-reset" class="stream-btn" onclick="resetCamera()">🔄 重置鏡頭</button>
                 <!-- 放大畫面餵食：點擊後出現下拉選單 -->
                 <div id="fs-feed-container" class="relative cam-a-only">
                     <button onclick="toggleFeedDropdown(event)" class="text-3xl hover:scale-110 transition-transform select-none">
@@ -802,6 +821,23 @@
 
         // --- 攝影機切換 ---
         let currentCam = 'A';
+        let camStates = { A: {auto: true, exposure: null}, B: {auto: true, exposure: null} };
+
+        // 依 camStates[currentCam] 還原曝光拉桿 UI
+        function applyExposureUI() {
+            const st = camStates[currentCam] || {auto: true, exposure: null};
+            const slider = document.getElementById('exp-slider');
+            const autoBtn = document.getElementById('exp-auto-btn');
+            if (st.auto || st.exposure === null) {
+                slider.value = 50;
+                autoBtn.textContent = 'AUTO';
+                autoBtn.classList.add('auto');
+            } else {
+                slider.value = st.exposure;
+                autoBtn.textContent = '手動';
+                autoBtn.classList.remove('auto');
+            }
+        }
 
         async function initCameras() {
             try {
@@ -811,6 +847,9 @@
                     return;
                 }
                 const data = await res.json();
+                if (data?.A) camStates.A = {auto: data.A.auto, exposure: data.A.exposure};
+                if (data?.B) camStates.B = {auto: data.B.auto, exposure: data.B.exposure};
+                applyExposureUI();
                 const camBAvailable = data?.B?.available || false;
                 const bannerIcon = document.getElementById('banner-icon-btn');
                 if (!bannerIcon) {
@@ -824,6 +863,59 @@
                 }
             } catch (e) {
                 console.error('Failed to load camera info:', e);
+            }
+        }
+
+        // --- 曝光控制 ---
+        let _expTimer = null;
+        function onExposureInput(value) {
+            camStates[currentCam] = {auto: false, exposure: parseInt(value, 10)};
+            const autoBtn = document.getElementById('exp-auto-btn');
+            autoBtn.textContent = '手動';
+            autoBtn.classList.remove('auto');
+            clearTimeout(_expTimer);
+            _expTimer = setTimeout(() => {
+                fetch('/api/camera/exposure', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({target: currentCam, value: parseInt(value, 10)})
+                }).catch(e => console.error('set exposure failed:', e));
+            }, 150);
+        }
+
+        async function resetExposure() {
+            camStates[currentCam] = {auto: true, exposure: null};
+            applyExposureUI();
+            try {
+                await fetch('/api/camera/exposure', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({target: currentCam, value: null})
+                });
+            } catch (e) { console.error('reset exposure failed:', e); }
+        }
+
+        // --- 重置卡死攝影機 ---
+        async function resetCamera() {
+            const btn = document.getElementById('btn-cam-reset');
+            btn.disabled = true;
+            const orig = btn.textContent;
+            btn.textContent = '重置中…';
+            try {
+                await fetch('/api/camera/reset', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({target: currentCam})
+                });
+                // 刷新串流（沿用切換攝影機的重連手法）
+                const img = document.getElementById('video-stream');
+                const feedUrl = currentCam === 'A' ? '/video_feed' : '/video_feed_b';
+                img.src = '';
+                setTimeout(() => { img.src = feedUrl; }, 800);
+            } catch (e) {
+                console.error('reset camera failed:', e);
+            } finally {
+                setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 1000);
             }
         }
 
@@ -853,6 +945,7 @@
             document.querySelectorAll('.cam-a-only').forEach(el => {
                 el.style.display = cam === 'A' ? '' : 'none';
             });
+            applyExposureUI();
             closeCamDrawer();
             loadConfig();
         }

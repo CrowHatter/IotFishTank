@@ -40,12 +40,20 @@ def _get_device_by_path(index):
     return None
 
 class FishCamera:
+    # 曝光映射：UI 用 0–100 抽象刻度，後端線性映射到 V4L2 exposure_time_absolute
+    # 常見區間。實際範圍需在 Pi 上以 `v4l2-ctl --list-ctrls` 確認後微調。
+    EXPOSURE_MIN = 1
+    EXPOSURE_MAX = 1000
+
     def __init__(self, device_index=0):
         self.cap = None
         self.quality = 80
         self.output_size = (1280, 720)
         self._cam_lock = threading.Lock()
         self.device_index = device_index
+        # 曝光狀態：預設自動曝光（拉桿顯示 AUTO）
+        self.auto_exposure = True
+        self.exposure_value = None   # UI 0–100 刻度；None = 自動
         self.discover_camera()
 
     def discover_camera(self):
@@ -87,6 +95,54 @@ class FishCamera:
         with self._cam_lock:
             self.output_size = size
             self.quality = quality
+
+    def _apply_exposure_locked(self):
+        """套用目前的曝光狀態到硬體。需在持有 _cam_lock 時呼叫。回傳是否成功。"""
+        if not (self.cap and self.cap.isOpened()):
+            return False
+        try:
+            if self.auto_exposure or self.exposure_value is None:
+                # 3 = V4L2 aperture-priority/auto exposure
+                self.cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 3)
+            else:
+                # 1 = V4L2 manual exposure，先切手動再設值
+                self.cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)
+                ui = max(0, min(100, self.exposure_value))
+                mapped = self.EXPOSURE_MIN + (self.EXPOSURE_MAX - self.EXPOSURE_MIN) * ui / 100.0
+                self.cap.set(cv2.CAP_PROP_EXPOSURE, mapped)
+            return True
+        except Exception as e:
+            print(f"--- [Camera] 套用曝光失敗: {e} ---")
+            return False
+
+    def set_exposure(self, value):
+        """value = None → 恢復硬體自動曝光；0–100 → 手動曝光（線性映射）。
+        自動對焦不受影響。回傳是否成功。"""
+        with self._cam_lock:
+            if value is None:
+                self.auto_exposure = True
+                self.exposure_value = None
+            else:
+                self.auto_exposure = False
+                self.exposure_value = max(0, min(100, int(value)))
+            return self._apply_exposure_locked()
+
+    def reset(self):
+        """釋放並重新初始化攝影機（USB 卡死時用），重新套用既有輸出與曝光設定。
+        回傳是否成功。"""
+        with self._cam_lock:
+            print(f"--- [Camera] 重置攝影機 (/dev/video{self.device_index}) ---")
+            if self.cap:
+                try:
+                    self.cap.release()
+                except Exception:
+                    pass
+                self.cap = None
+            self.discover_camera()
+            ok = self.cap is not None and self.cap.isOpened()
+            if ok:
+                self._apply_exposure_locked()
+            return ok
 
     def get_raw_frame(self):
         """回傳原生解析度 BGR numpy frame（供影像分析用），失敗回 None。

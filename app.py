@@ -276,24 +276,39 @@ scheduler.init_app(app)
 scheduler.start()
 
 # --- 影像串流產生器 ---
-def gen_frames(camera=None):
+# 按需串流：每台攝影機獨立計數目前連線中的觀看者。沒有觀看者時 generator
+# 不會被迭代（Flask MJPEG response 僅在瀏覽器連著 <img> 時消費），擷取迴圈
+# 自然停止；計數僅用於記錄與驗證「無連線→不擷取」。
+_viewers = {'A': 0, 'B': 0}
+_viewers_lock = threading.Lock()
+
+def gen_frames(camera=None, cam_id='A'):
     """回傳指定攝影機的 MJPEG 幀串流。camera 為 None 時用 fish_cam。"""
     if camera is None:
         camera = fish_cam
-    last = 0.0
-    while True:
-        fps = FPS_CYCLE[stream_fps_idx]
-        interval = 1.0 / fps
-        now = time.time()
-        if now - last < interval:
-            time.sleep(0.005)
-            continue
-        frame, content_type = camera.get_frame()
-        if frame is None:
-            time.sleep(0.1)
-            continue
-        last = time.time()
-        yield (b'--frame\r\nContent-Type: ' + content_type.encode() + b'\r\n\r\n' + frame + b'\r\n\r\n')
+    with _viewers_lock:
+        _viewers[cam_id] += 1
+        print(f"[Stream {cam_id}] 觀看者連線，目前 {_viewers[cam_id]} 人")
+    try:
+        last = 0.0
+        while True:
+            fps = FPS_CYCLE[stream_fps_idx]
+            interval = 1.0 / fps
+            now = time.time()
+            if now - last < interval:
+                time.sleep(0.005)
+                continue
+            frame, content_type = camera.get_frame()
+            if frame is None:
+                time.sleep(0.1)
+                continue
+            last = time.time()
+            yield (b'--frame\r\nContent-Type: ' + content_type.encode() + b'\r\n\r\n' + frame + b'\r\n\r\n')
+    finally:
+        with _viewers_lock:
+            _viewers[cam_id] -= 1
+            print(f"[Stream {cam_id}] 觀看者離線，目前 {_viewers[cam_id]} 人"
+                  f"{'（迴圈停止，不再擷取）' if _viewers[cam_id] == 0 else ''}")
 
 # --- 登入管理 ---
 login_manager = LoginManager()
@@ -466,7 +481,7 @@ def index():
 def video_feed():
     if fish_cam is None:
         return "攝影機 A 未連接", 404
-    return Response(gen_frames(),
+    return Response(gen_frames(fish_cam, 'A'),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @app.route('/video_feed_b')
@@ -474,16 +489,49 @@ def video_feed():
 def video_feed_b():
     if fish_cam_b is None:
         return "攝影機 B 未連接", 404
-    return Response(gen_frames(fish_cam_b),
+    return Response(gen_frames(fish_cam_b, 'B'),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
+
+def _cam_by_target(target):
+    """target = 'A'|'B' → 對應的 FishCamera 實例（或 None）。"""
+    return fish_cam if target == 'A' else fish_cam_b if target == 'B' else None
+
+def _cam_state(cam):
+    if cam is None:
+        return {"available": False, "auto": True, "exposure": None}
+    return {"available": True, "auto": cam.auto_exposure, "exposure": cam.exposure_value}
 
 @app.route('/api/cameras', methods=['GET'])
 @login_required
 def get_cameras():
     return jsonify({
-        "A": {"available": fish_cam is not None},
-        "B": {"available": fish_cam_b is not None}
+        "A": _cam_state(fish_cam),
+        "B": _cam_state(fish_cam_b)
     })
+
+@app.route('/api/camera/reset', methods=['POST'])
+@login_required
+def camera_reset():
+    target = (request.json or {}).get('target', 'A')
+    cam = _cam_by_target(target)
+    if cam is None:
+        return jsonify({"status": "error", "reason": f"攝影機 {target} 未連接"}), 404
+    ok = cam.reset()
+    return jsonify({"status": "success" if ok else "error", "target": target})
+
+@app.route('/api/camera/exposure', methods=['POST'])
+@login_required
+def camera_exposure():
+    body = request.json or {}
+    target = body.get('target', 'A')
+    cam = _cam_by_target(target)
+    if cam is None:
+        return jsonify({"status": "error", "reason": f"攝影機 {target} 未連接"}), 404
+    value = body.get('value')   # None = 回自動；0–100 = 手動
+    ok = cam.set_exposure(value)
+    return jsonify({"status": "success" if ok else "error",
+                    "target": target, "auto": cam.auto_exposure,
+                    "value": cam.exposure_value})
 
 @app.route('/api/stream_setting', methods=['POST'])
 @login_required
