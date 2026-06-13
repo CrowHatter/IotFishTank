@@ -72,11 +72,14 @@
         .exp-panel { position: absolute; left: 0.5rem; top: 50%; transform: translateY(-50%);
             z-index: 45; display: flex; flex-direction: column; align-items: center; gap: 0.4rem;
             background: rgba(0,0,0,0.45); padding: 0.5rem 0.35rem; border-radius: 0.5rem; }
-        .exp-slider { writing-mode: vertical-lr; direction: rtl; -webkit-appearance: slider-vertical;
-            width: 0.5rem; height: 8rem; accent-color: #9ca3af; cursor: pointer; }
+        .exp-arrow { color: #fff; font-size: 0.9rem; line-height: 1; background: rgba(0,0,0,0.4);
+            border: none; border-radius: 0.3rem; width: 1.6rem; height: 1.6rem; cursor: pointer;
+            transition: background 0.15s; }
+        .exp-arrow:hover { background: rgba(255,255,255,0.25); }
+        .exp-arrow:disabled { opacity: 0.4; cursor: default; }
         .exp-label { color: #fff; font-size: 0.6rem; font-weight: 700; letter-spacing: 0.05em;
             background: rgba(0,0,0,0.4); border: none; border-radius: 0.3rem; padding: 0.15rem 0.3rem;
-            cursor: pointer; transition: background 0.15s; }
+            cursor: pointer; transition: background 0.15s; min-width: 2.6rem; }
         .exp-label:hover { background: rgba(255,255,255,0.25); }
         .exp-label.auto { color: #6ee7b7; }
         /* 點擊畫面切換：所有疊加按鈕往各自最近的邊緣滑出並淡出 */
@@ -108,11 +111,11 @@
         <div id="video-container" class="max-w-5xl mx-auto aspect-video relative overflow-hidden bg-black">
             <img id="video-stream" src="/video_feed" alt="Fish Tank Live Stream">
 
-            <!-- 左側縱向曝光拉桿（A、B 皆顯示） -->
+            <!-- 左側曝光控制：上下箭頭 + AUTO（A、B 皆顯示） -->
             <div id="exp-panel" class="exp-panel" onclick="event.stopPropagation()">
-                <input id="exp-slider" type="range" min="0" max="100" value="50" class="exp-slider"
-                       oninput="onExposureInput(this.value)">
+                <button class="exp-arrow" onclick="nudgeExposure(1)" title="變亮">▲</button>
                 <button id="exp-auto-btn" class="exp-label auto" onclick="resetExposure()">AUTO</button>
+                <button class="exp-arrow" onclick="nudgeExposure(-1)" title="變暗">▼</button>
             </div>
 
             <div id="fs-controls" class="absolute top-4 right-4 flex items-center space-x-2 z-50" onclick="event.stopPropagation()">
@@ -857,22 +860,23 @@
 
         // --- 攝影機切換 ---
         let currentCam = 'A';
-        let camStates = { A: {auto: true, exposure: null}, B: {auto: true, exposure: null} };
+        let camStates = { A: {auto: true, step: null, steps: 0}, B: {auto: true, step: null, steps: 0} };
 
-        // 依 camStates[currentCam] 還原曝光拉桿 UI
+        // 依 camStates[currentCam] 還原曝光 UI（AUTO 標籤 / 手動步階）
         function applyExposureUI() {
-            const st = camStates[currentCam] || {auto: true, exposure: null};
-            const slider = document.getElementById('exp-slider');
+            const st = camStates[currentCam] || {auto: true, step: null, steps: 0};
             const autoBtn = document.getElementById('exp-auto-btn');
-            if (st.auto || st.exposure === null) {
-                slider.value = 50;
+            if (st.auto || st.step === null) {
                 autoBtn.textContent = 'AUTO';
                 autoBtn.classList.add('auto');
             } else {
-                slider.value = st.exposure;
-                autoBtn.textContent = '手動';
+                autoBtn.textContent = `${st.step}/${st.steps}`;
                 autoBtn.classList.remove('auto');
             }
+        }
+
+        function _storeCamState(id, d) {
+            if (d) camStates[id] = {auto: d.auto, step: d.step, steps: d.steps};
         }
 
         async function initCameras() {
@@ -883,8 +887,8 @@
                     return;
                 }
                 const data = await res.json();
-                if (data?.A) camStates.A = {auto: data.A.auto, exposure: data.A.exposure};
-                if (data?.B) camStates.B = {auto: data.B.auto, exposure: data.B.exposure};
+                _storeCamState('A', data?.A);
+                _storeCamState('B', data?.B);
                 applyExposureUI();
                 const camBAvailable = data?.B?.available || false;
                 const bannerIcon = document.getElementById('banner-icon-btn');
@@ -902,32 +906,30 @@
             }
         }
 
-        // --- 曝光控制 ---
-        let _expTimer = null;
-        function onExposureInput(value) {
-            camStates[currentCam] = {auto: false, exposure: parseInt(value, 10)};
-            const autoBtn = document.getElementById('exp-auto-btn');
-            autoBtn.textContent = '手動';
-            autoBtn.classList.remove('auto');
-            clearTimeout(_expTimer);
-            _expTimer = setTimeout(() => {
-                fetch('/api/camera/exposure', {
+        // --- 曝光控制（上下箭頭 ±1 步階 / AUTO） ---
+        async function nudgeExposure(direction) {
+            try {
+                const res = await fetch('/api/camera/exposure', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({target: currentCam, value: parseInt(value, 10)})
-                }).catch(e => console.error('set exposure failed:', e));
-            }, 150);
+                    body: JSON.stringify({target: currentCam, delta: direction})
+                });
+                const d = await res.json();
+                _storeCamState(currentCam, d);
+                applyExposureUI();
+            } catch (e) { console.error('nudge exposure failed:', e); }
         }
 
         async function resetExposure() {
-            camStates[currentCam] = {auto: true, exposure: null};
-            applyExposureUI();
             try {
-                await fetch('/api/camera/exposure', {
+                const res = await fetch('/api/camera/exposure', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({target: currentCam, value: null})
+                    body: JSON.stringify({target: currentCam, auto: true})
                 });
+                const d = await res.json();
+                _storeCamState(currentCam, d);
+                applyExposureUI();
             } catch (e) { console.error('reset exposure failed:', e); }
         }
 

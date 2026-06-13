@@ -498,8 +498,9 @@ def _cam_by_target(target):
 
 def _cam_state(cam):
     if cam is None:
-        return {"available": False, "auto": True, "exposure": None}
-    return {"available": True, "auto": cam.auto_exposure, "exposure": cam.exposure_value}
+        return {"available": False, "auto": True, "step": None, "steps": 0}
+    st = cam.exposure_state()
+    return {"available": True, **st}
 
 @app.route('/api/cameras', methods=['GET'])
 @login_required
@@ -527,11 +528,15 @@ def camera_exposure():
     cam = _cam_by_target(target)
     if cam is None:
         return jsonify({"status": "error", "reason": f"攝影機 {target} 未連接"}), 404
-    value = body.get('value')   # None = 回自動；0–100 = 手動
-    ok = cam.set_exposure(value)
+    # 三種操作：auto(回自動) / delta(±1 步階) / value(指定步階)
+    if body.get('auto'):
+        ok = cam.set_exposure(None)
+    elif 'delta' in body:
+        ok = cam.nudge_exposure(int(body['delta']))
+    else:
+        ok = cam.set_exposure(body.get('value'))
     return jsonify({"status": "success" if ok else "error",
-                    "target": target, "auto": cam.auto_exposure,
-                    "value": cam.exposure_value})
+                    "target": target, **cam.exposure_state()})
 
 @app.route('/api/stream_setting', methods=['POST'])
 @login_required
