@@ -2,3 +2,4 @@ config_secret.json
 hardware/__pycache__/
 CLAUDE.md
 __pycache__/app.cpython-312.pyc
+config.json
