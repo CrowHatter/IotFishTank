@@ -5,7 +5,7 @@
 ![Network](https://img.shields.io/badge/Network-NAS%20Reverse%20Proxy-green)
 ![Deployment](https://img.shields.io/badge/Deployment-Gunicorn%20(gthread)%20%2B%20systemd-red)
 
-這是一個基於 **Raspberry Pi 5** 的全方位魚缸管理解決方案。透過 **NAS 反向代理 (Reverse Proxy)** 與 **Let's Encrypt SSL** 實現安全的遠端 HTTPS 訪問，並提供完整的 **PWA (Progressive Web App)** 行動端體驗。
+這是一個基於 **Raspberry Pi 4** 的全方位魚缸管理解決方案。透過 **NAS 反向代理 (Reverse Proxy)** 與 **Let's Encrypt SSL** 實現安全的遠端 HTTPS 訪問，並提供完整的 **PWA (Progressive Web App)** 行動端體驗。
 
 ---
 
