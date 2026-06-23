@@ -72,11 +72,29 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
+```bash
+# 安裝 OpenCV runtime 依賴（勿裝 -dev，會拉爆小記憶體機器）
+# 分批安裝 + 清快取，避免 Pi Zero 2W 等小記憶體機器 OOM
+sudo apt update && sync && sudo sysctl -w vm.drop_caches=3
+sudo apt install -y --no-install-recommends libavcodec59 libavformat59 && sync && sudo sysctl -w vm.drop_caches=3
+sleep 5
+sudo apt install -y --no-install-recommends libswscale6 libavutil57 && sync && sudo sysctl -w vm.drop_caches=3
+sleep 5
+sudo apt install -y --no-install-recommends libopenblas0 libgfortran5 && sync && sudo sysctl -w vm.drop_caches=3
+sleep 5
+sudo apt install -y --no-install-recommends libwebp7 libwebpdemux2 libopenjp2-7 && sync && sudo sysctl -w vm.drop_caches=3
+sleep 5
+sudo apt install -y --no-install-recommends libgl1 libglib2.0-0 && sync && sudo sysctl -w vm.drop_caches=3
+sleep 5
+sudo apt install -y --no-install-recommends libgtk-3-0 libatlas3-base && sync && sudo sysctl -w vm.drop_caches=3
+sleep 5
+sudo apt clean && sync && sudo sysctl -w vm.drop_caches=3
+```
 
 ### 2. 測試服務啟動
 使用 Gunicorn 配合 **gthread** 於 5080 Port 啟動：
 ```bash
-gunicorn --worker-class gthread --threads 15 --bind 0.0.0.0:5080 app:app
+gunicorn --worker-class gthread --threads 2 --bind 0.0.0.0:5080 app:app
 ```
 
 ---
@@ -97,18 +115,20 @@ Description=Gunicorn gthread service for IoT Fish Tank
 After=network.target
 
 [Service]
-User=ericweng
+User=<你的使用者名稱>
 Group=www-data
-WorkingDirectory=/home/ericweng/Desktop/IotFishTank
-Environment="PATH=/home/ericweng/Desktop/IotFishTank/.venv/bin"
+WorkingDirectory=/path/to/YOUR_PROJECT
+Environment="PATH=/path/to/YOUR_PROJECT/.venv/bin"
 
 # 使用 gthread 模式，確保對底層硬體驅動 (GPIO/USB) 的相容性
-ExecStart=/home/ericweng/Desktop/IotFishTank/.venv/bin/gunicorn \
+ExecStart=/path/to/YOUR_PROJECT/.venv/bin/gunicorn \
     --worker-class gthread \
-    --workers 1 \
-    --threads 15 \
-    --timeout 0 \
-    --keep-alive 5 \
+    --workers 2 \
+    --threads 2 \
+    --max-requests 250 \
+    --max-requests-jitter 30 \
+    --timeout 30 \
+    --keep-alive 2 \
     --preload \
     --bind 0.0.0.0:5080 \
     app:app
@@ -135,7 +155,13 @@ sudo systemctl start fishtank.service
 針對 Raspberry Pi 5 網卡偶發的韌體鎖死 (Firmware Hang, Error -110) 與網路斷連問題，本專案實作了三層防禦機制。
 
 ### 1. 網路監控腳本 (Network Watchdog)
-建立於 `/usr/local/bin/net_watchdog.sh`，具備硬體偵測與階段式恢復邏輯：
+
+**步驟 1：建立腳本檔案**
+```bash
+sudo nano /usr/local/bin/net_watchdog.sh
+```
+
+貼入以下內容：
 ```bash
 #!/bin/bash
 
@@ -179,7 +205,24 @@ echo "$(date): [階段 1] 網路不通，執行 nmcli 重啟 wlan0..." >> $LOG_F
 /usr/bin/sleep 5
 /usr/bin/nmcli device connect wlan0 > /dev/null 2>&1
 ```
-如果是使用 windows 遠端 ssh 複製貼上記得 ```sudo sed -i 's/\r$//' /usr/local/bin/net_watchdog.sh```避免 ```\r```的問題
+
+**步驟 2：修正權限與建立 log 檔**
+```bash
+# Windows SSH 複製貼上會產生 \r，必須清除
+sudo sed -i 's/\r$//' /usr/local/bin/net_watchdog.sh
+
+# 給予執行權限
+sudo chmod +x /usr/local/bin/net_watchdog.sh
+
+# 建立 log 檔（root cron 寫入 /var/log/ 不需要額外權限，但先建立確保存在）
+sudo touch /var/log/network_watchdog.log
+```
+
+**步驟 3：手動測試腳本是否正常執行**
+```bash
+sudo /usr/local/bin/net_watchdog.sh && echo "OK"
+cat /var/log/network_watchdog.log
+```
 
 ### 2. 定時任務配置 (Crontab)
 透過 `sudo crontab -e` 進行系統級別的監控與基礎維護：
