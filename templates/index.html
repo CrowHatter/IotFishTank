@@ -114,7 +114,7 @@
             <!-- 左側曝光控制：上下箭頭 + AUTO（A、B 皆顯示） -->
             <div id="exp-panel" class="exp-panel" onclick="event.stopPropagation()">
                 <button class="exp-arrow" onclick="nudgeExposure(1)" title="變亮">▲</button>
-                <button id="exp-auto-btn" class="exp-label auto" onclick="resetExposure()">AUTO</button>
+                <button id="exp-auto-btn" class="exp-label auto">AUTO</button>
                 <button class="exp-arrow" onclick="nudgeExposure(-1)" title="變暗">▼</button>
             </div>
 
@@ -862,18 +862,55 @@
         let currentCam = 'A';
         let camStates = { A: {auto: true, step: null, steps: 0}, B: {auto: true, step: null, steps: 0} };
 
-        // 依 camStates[currentCam] 還原曝光 UI（AUTO 標籤 / 手動步階）
+        // 依 camStates[currentCam] 還原曝光 UI
+        // auto=true  → AUTO(12)（綠色）
+        // auto=false → 12/20（白色）
         function applyExposureUI() {
             const st = camStates[currentCam] || {auto: true, step: null, steps: 0};
             const autoBtn = document.getElementById('exp-auto-btn');
-            if (st.auto || st.step === null) {
-                autoBtn.textContent = 'AUTO';
+            if (st.auto) {
+                autoBtn.textContent = st.step !== null ? `AUTO(${st.step})` : 'AUTO';
                 autoBtn.classList.add('auto');
             } else {
-                autoBtn.textContent = `${st.step}/${st.steps}`;
+                autoBtn.textContent = st.step !== null ? `${st.step}/${st.steps}` : 'AUTO';
                 autoBtn.classList.remove('auto');
             }
         }
+
+        // 長按校準：長按 exp-auto-btn 2 秒，以當下畫面亮度為 auto 目標
+        ;(function() {
+            let longPressTimer = null;
+            let longPressed = false;
+            const btn = document.getElementById('exp-auto-btn');
+
+            btn.addEventListener('pointerdown', () => {
+                longPressed = false;
+                longPressTimer = setTimeout(async () => {
+                    longPressed = true;
+                    try {
+                        const res = await fetch('/api/camera/exposure/calibrate', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({target: currentCam})
+                        });
+                        const d = await res.json();
+                        if (d.status === 'success') {
+                            _storeCamState(currentCam, d);
+                            btn.textContent = 'SET';
+                            setTimeout(() => applyExposureUI(), 1000);
+                        }
+                    } catch(e) { console.error('calibrate failed:', e); }
+                }, 2000);
+            });
+            btn.addEventListener('pointerup',    () => clearTimeout(longPressTimer));
+            btn.addEventListener('pointerleave', () => clearTimeout(longPressTimer));
+
+            // 短按：切換到自動模式（長按完成時忽略）
+            btn.addEventListener('click', () => {
+                if (longPressed) { longPressed = false; return; }
+                resetExposure();
+            });
+        })();
 
         function _storeCamState(id, d) {
             if (d) camStates[id] = {auto: d.auto, step: d.step, steps: d.steps};

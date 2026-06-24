@@ -408,6 +408,19 @@ def _init_cameras():
             print(f"[Camera Init] 攝影機 B 初始化失敗: {e}")
             fish_cam_b = None
 
+    # 讀取各鏡頭的校準亮度目標（如果有的話）
+    cfg = read_json(CONFIG_FILE)
+    if fish_cam:
+        t = cfg.get('auto_brightness_target_A')
+        if t is not None:
+            fish_cam.set_auto_target(t)
+            print(f"[Camera Init] 攝影機 A 亮度目標已載入: {t}")
+    if fish_cam_b:
+        t = cfg.get('auto_brightness_target_B')
+        if t is not None:
+            fish_cam_b.set_auto_target(t)
+            print(f"[Camera Init] 攝影機 B 亮度目標已載入: {t}")
+
 # 確保既有 config.json 也有水位設定欄位（舊檔可能缺少），缺則補上預設值
 def _ensure_water_config():
     defaults = {
@@ -537,6 +550,24 @@ def camera_exposure():
         ok = cam.set_exposure(body.get('value'))
     return jsonify({"status": "success" if ok else "error",
                     "target": target, **cam.exposure_state()})
+
+@app.route('/api/camera/exposure/calibrate', methods=['POST'])
+@login_required
+def camera_exposure_calibrate():
+    body = request.json or {}
+    target = body.get('target', 'A')
+    cam = _cam_by_target(target)
+    if cam is None:
+        return jsonify({"status": "error", "reason": f"攝影機 {target} 未連接"}), 404
+    brightness = cam.measure_brightness()
+    if brightness is None:
+        return jsonify({"status": "error", "reason": "無法取樣"}), 500
+    cam.set_auto_target(brightness)
+    key = f"auto_brightness_target_{target}"
+    safe_update_config(lambda cfg: {**cfg, key: round(brightness, 1)})
+    print(f"[Camera Calibrate] 攝影機 {target} 亮度目標設定為 {brightness:.1f}")
+    return jsonify({"status": "success", "target": target,
+                    "brightness": round(brightness, 1), **cam.exposure_state()})
 
 @app.route('/api/stream_setting', methods=['POST'])
 @login_required
