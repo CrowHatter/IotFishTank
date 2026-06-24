@@ -129,7 +129,6 @@ ExecStart=/path/to/YOUR_PROJECT/.venv/bin/gunicorn \
     --max-requests-jitter 30 \
     --timeout 30 \
     --keep-alive 2 \
-    --preload \
     --bind 0.0.0.0:5080 \
     app:app
 
