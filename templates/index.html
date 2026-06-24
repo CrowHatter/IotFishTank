@@ -116,6 +116,7 @@
                 <button class="exp-arrow" onclick="nudgeExposure(1)" title="變亮">▲</button>
                 <button id="exp-auto-btn" class="exp-label auto">AUTO</button>
                 <button class="exp-arrow" onclick="nudgeExposure(-1)" title="變暗">▼</button>
+                <span id="exp-brightness" style="color:rgba(255,255,255,0.5);font-size:0.5rem;font-weight:600;letter-spacing:0.04em;text-align:center;min-width:2.6rem;"></span>
             </div>
 
             <div id="fs-controls" class="absolute top-4 right-4 flex items-center space-x-2 z-50" onclick="event.stopPropagation()">
@@ -875,6 +876,8 @@
                 autoBtn.textContent = st.step !== null ? `${st.step}/${st.steps}` : 'AUTO';
                 autoBtn.classList.remove('auto');
             }
+            const bri = document.getElementById('exp-brightness');
+            if (bri) bri.textContent = st.brightness !== null ? `bri:${st.brightness}` : '';
         }
 
         // 長按校準：長按 exp-auto-btn 2 秒，以當下畫面亮度為 auto 目標
@@ -913,7 +916,25 @@
         })();
 
         function _storeCamState(id, d) {
-            if (d) camStates[id] = {auto: d.auto, step: d.step, steps: d.steps};
+            if (d) camStates[id] = {auto: d.auto, step: d.step, steps: d.steps, brightness: d.brightness ?? null};
+        }
+
+        // auto 模式下定期 poll，讓 AUTO(?) 同步後端 step
+        let _autoPollTimer = null;
+        function _scheduleAutoPoll() {
+            clearInterval(_autoPollTimer);
+            _autoPollTimer = setInterval(async () => {
+                const st = camStates[currentCam];
+                if (!st || !st.auto) { clearInterval(_autoPollTimer); return; }
+                try {
+                    const res = await fetch('/api/cameras');
+                    if (!res.ok) return;
+                    const data = await res.json();
+                    _storeCamState('A', data?.A);
+                    _storeCamState('B', data?.B);
+                    applyExposureUI();
+                } catch(e) {}
+            }, 3000);
         }
 
         async function initCameras() {
@@ -927,6 +948,7 @@
                 _storeCamState('A', data?.A);
                 _storeCamState('B', data?.B);
                 applyExposureUI();
+                if (camStates[currentCam]?.auto) _scheduleAutoPoll();
                 const camBAvailable = data?.B?.available || false;
                 const bannerIcon = document.getElementById('banner-icon-btn');
                 if (!bannerIcon) {
@@ -954,6 +976,7 @@
                 const d = await res.json();
                 _storeCamState(currentCam, d);
                 applyExposureUI();
+                clearInterval(_autoPollTimer);  // 手動模式停止 poll
             } catch (e) { console.error('nudge exposure failed:', e); }
         }
 
@@ -967,6 +990,7 @@
                 const d = await res.json();
                 _storeCamState(currentCam, d);
                 applyExposureUI();
+                _scheduleAutoPoll();  // 切回 auto 模式，啟動 poll
             } catch (e) { console.error('reset exposure failed:', e); }
         }
 
