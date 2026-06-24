@@ -948,7 +948,20 @@
                 _storeCamState('A', data?.A);
                 _storeCamState('B', data?.B);
                 applyExposureUI();
-                if (camStates[currentCam]?.auto) _scheduleAutoPoll();
+                if (camStates[currentCam]?.auto) {
+                    _scheduleAutoPoll();
+                    // 1 秒後補一次 poll，確保 bri 和 step 在載入時就顯示
+                    setTimeout(async () => {
+                        try {
+                            const r2 = await fetch('/api/cameras');
+                            if (!r2.ok) return;
+                            const d2 = await r2.json();
+                            _storeCamState('A', d2?.A);
+                            _storeCamState('B', d2?.B);
+                            applyExposureUI();
+                        } catch(e) {}
+                    }, 1000);
+                }
                 const camBAvailable = data?.B?.available || false;
                 const bannerIcon = document.getElementById('banner-icon-btn');
                 if (!bannerIcon) {

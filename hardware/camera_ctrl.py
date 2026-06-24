@@ -114,6 +114,12 @@ class FishCamera:
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
             self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            # 立刻鎖定手動曝光，阻止 ISP 在暖機期間自動拉高 gain
+            self.cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)
+            step = self.exposure_step if self.exposure_step is not None else (self.STEPS // 2)
+            exp, gain = self._step_to_exp_gain(step)
+            self.cap.set(cv2.CAP_PROP_EXPOSURE, exp)
+            self.cap.set(cv2.CAP_PROP_GAIN, gain)
             print("--- [Camera] 等待硬體穩定中... ---")
             time.sleep(2)
             for _ in range(5):
