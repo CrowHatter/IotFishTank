@@ -123,12 +123,9 @@ Environment="PATH=/path/to/YOUR_PROJECT/.venv/bin"
 # 使用 gthread 模式，確保對底層硬體驅動 (GPIO/USB) 的相容性
 ExecStart=/path/to/YOUR_PROJECT/.venv/bin/gunicorn \
     --worker-class gthread \
-    --workers 2 \
-    --threads 2 \
-    --max-requests 250 \
-    --max-requests-jitter 30 \
-    --timeout 30 \
-    --keep-alive 2 \
+    --workers 1 \
+    --threads 15 \
+    --timeout 0 \
     --bind 0.0.0.0:5080 \
     app:app
 
