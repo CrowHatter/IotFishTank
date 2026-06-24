@@ -75,9 +75,7 @@ class FishCamera:
                        # step 17..20：固定 exp_hi，調 gain 80→128
 
     # 自動亮度 thread 參數
-    _AUTO_CHECK_INTERVAL    = 3.0   # 正常輪詢間隔（秒）
-    _AUTO_FAST_INTERVAL     = 0.5   # 亮度突變後的快速跟進間隔
-    _AUTO_SURGE_THRESHOLD   = 20    # 亮度變化超過此值視為突變
+    _AUTO_CHECK_INTERVAL    = 3.0   # 輪詢間隔（秒）
     _AUTO_TARGET_BRIGHTNESS = 110
     _AUTO_DEADBAND          = 12
     _AUTO_SAMPLE_W          = 80
@@ -97,6 +95,7 @@ class FishCamera:
         self._auto_stop_event = threading.Event()
         self._auto_thread = None
         self._auto_target_brightness = float(self._AUTO_TARGET_BRIGHTNESS)
+        self._last_brightness = None
 
         self.discover_camera()
         if self.auto_exposure:
@@ -192,19 +191,16 @@ class FishCamera:
         self._auto_thread = None
 
     def _auto_exposure_loop(self):
-        interval = self._AUTO_CHECK_INTERVAL
         prev_brightness = None
-        while not self._auto_stop_event.wait(timeout=interval):
+        while not self._auto_stop_event.wait(timeout=self._AUTO_CHECK_INTERVAL):
             # 短暫持鎖取一幀
             with self._cam_lock:
                 if not self.auto_exposure:
                     break
                 if not (self.cap and self.cap.isOpened()):
-                    interval = self._AUTO_CHECK_INTERVAL
                     continue
                 ret, frame = self.cap.read()
             if not ret or frame is None:
-                interval = self._AUTO_CHECK_INTERVAL
                 continue
 
             # 鎖外計算亮度（不阻塞串流）
@@ -213,12 +209,11 @@ class FishCamera:
             brightness = float(cv2.cvtColor(small, cv2.COLOR_BGR2GRAY).mean())
             self._last_brightness = round(brightness, 1)
 
-            # 亮度突變：下一次快速跟進
-            if prev_brightness is not None and abs(brightness - prev_brightness) >= self._AUTO_SURGE_THRESHOLD:
-                interval = self._AUTO_FAST_INTERVAL
-            else:
-                interval = self._AUTO_CHECK_INTERVAL
             prev_brightness = brightness
+
+            # 已被切換到手動則直接退出，不再調整
+            if not self.auto_exposure:
+                break
 
             error = brightness - self._auto_target_brightness
             if abs(error) <= self._AUTO_DEADBAND:
@@ -263,8 +258,9 @@ class FishCamera:
             return self._apply_exposure_locked()
 
     def exposure_state(self):
-        """回傳曝光狀態給前端：{auto, step, steps}。auto 模式下 step 也有值。"""
-        return {"auto": self.auto_exposure, "step": self.exposure_step, "steps": self.STEPS}
+        """回傳曝光狀態給前端：{auto, step, steps, brightness}。"""
+        return {"auto": self.auto_exposure, "step": self.exposure_step, "steps": self.STEPS,
+                "brightness": self._last_brightness}
 
     # --- 校準 ---
 
