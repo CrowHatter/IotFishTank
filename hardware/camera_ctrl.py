@@ -242,20 +242,33 @@ class FishCamera:
             self._start_auto_thread()
             return True
         else:
-            self._auto_stop_event.set()  # 通知 thread 停止，不 join（避免持鎖 deadlock）
+            self._auto_stop_event.set()
             with self._cam_lock:
                 self.auto_exposure = False
                 self.exposure_step = max(0, min(self.STEPS, int(value)))
-                return self._apply_exposure_locked()
+                ok = self._apply_exposure_locked()
+            self._settle_exposure()
+            return ok
 
     def nudge_exposure(self, direction):
         """箭頭調整 ±1 步階。從自動當前位置出發，不再是 STEPS//2。"""
-        self._auto_stop_event.set()  # 通知 thread 停止，不 join
+        self._auto_stop_event.set()
         with self._cam_lock:
             base = self.exposure_step if self.exposure_step is not None else (self.STEPS // 2)
             self.auto_exposure = False
             self.exposure_step = max(0, min(self.STEPS, base + (1 if direction > 0 else -1)))
-            return self._apply_exposure_locked()
+            ok = self._apply_exposure_locked()
+        self._settle_exposure()
+        return ok
+
+    def _settle_exposure(self):
+        """切手動後補寫硬體兩次，讓驅動在協商期間收斂到正確值。"""
+        for delay in (0.15, 0.35):
+            time.sleep(delay)
+            with self._cam_lock:
+                if self.auto_exposure:
+                    return  # 已被切回自動，不再干預
+                self._apply_exposure_locked()
 
     def exposure_state(self):
         """回傳曝光狀態給前端：{auto, step, steps, brightness}。"""
