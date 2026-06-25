@@ -630,9 +630,11 @@ class CsiCamera:
             if not self._picam:
                 return None
             try:
-                return self._picam.capture_array("main")
+                # picamera2 BGR888 format is actually RGB on this platform
+                frame = self._picam.capture_array("main")
             except Exception:
                 return None
+        return cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
 
     def get_frame(self):
         """Return (bytes, mime_type) encoded frame for MJPEG stream."""
