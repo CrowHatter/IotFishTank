@@ -91,6 +91,12 @@ sleep 5
 sudo apt clean && sync && sudo sysctl -w vm.drop_caches=3
 ```
 
+```bash
+# 安裝 picamera2（CSI 鏡頭 Camera A / OV5647 所需，Pi Zero 2W 適用）
+# 使用系統套件，不裝進 venv（picamera2 依賴 libcamera 系統層綁定）
+sudo apt install -y --no-install-recommends python3-picamera2
+```
+
 ### 2. 測試服務啟動
 使用 Gunicorn 配合 **gthread** 於 5080 Port 啟動：
 ```bash
