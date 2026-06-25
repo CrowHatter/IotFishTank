@@ -634,7 +634,8 @@ class CsiCamera:
                 frame = self._picam.capture_array("main")
             except Exception:
                 return None
-        return cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        return cv2.flip(frame, -1)
 
     def get_frame(self):
         """Return (bytes, mime_type) encoded frame for MJPEG stream."""
