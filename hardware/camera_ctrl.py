@@ -351,14 +351,9 @@ class FishCamera:
                 ret, frame = self.cap.read()
                 if ret and frame is not None:
                     if self.output_size is not None:
-                        frame = cv2.resize(frame, self.output_size, interpolation=cv2.INTER_AREA)
-                    use_webp = self.output_size is not None and self.output_size[1] <= 480
-                    if use_webp:
-                        _, buffer = cv2.imencode('.webp', frame, [cv2.IMWRITE_WEBP_QUALITY, self.quality])
-                        return buffer.tobytes(), 'image/webp'
-                    else:
-                        _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, self.quality])
-                        return buffer.tobytes(), 'image/jpeg'
+                        frame = cv2.resize(frame, self.output_size, interpolation=cv2.INTER_LINEAR)
+                    _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, self.quality])
+                    return buffer.tobytes(), 'image/jpeg'
         return None, None
 
     def __del__(self):
@@ -404,6 +399,7 @@ class CsiCamera:
 
         self.quality = 80
         self.output_size = (1280, 720)
+        self._current_size = None   # tracks what picamera2 is currently configured to
         self._cam_lock = threading.Lock()
 
         self.auto_exposure = True
@@ -423,6 +419,16 @@ class CsiCamera:
 
     # --- init ---
 
+    def _make_config(self, picam, size):
+        """Build a video config with MJPEGEncoder main stream at given size."""
+        hw_size = size if size is not None else (1920, 1080)
+        return picam.create_video_configuration(
+            main={"size": hw_size, "format": "MJPEG"},
+            lores={"size": (self._AUTO_SAMPLE_W * 4, self._AUTO_SAMPLE_H * 4), "format": "YUV420"},
+            controls={"FrameRate": 30},
+            buffer_count=2,
+        )
+
     def discover_camera(self):
         print("--- [CsiCamera] 初始化 CSI (OV5647 fixed-focus) ---")
         try:
@@ -435,17 +441,13 @@ class CsiCamera:
                 self._exp_max_us = min(limits[1], self._EXP_MAX_US)
             print(f"--- [CsiCamera] 曝光範圍: {self._exp_min_us}–{self._exp_max_us} µs ---")
 
-            config = picam.create_video_configuration(
-                main={"size": (1920, 1080), "format": "BGR888"},
-                controls={"FrameRate": 30},
-                buffer_count=2,
-            )
+            config = self._make_config(picam, self.output_size)
             picam.configure(config)
             picam.start()
             time.sleep(2)   # sensor warm-up
             # Flush a few frames
             for _ in range(5):
-                picam.capture_array("main")
+                picam.capture_buffer("main")
 
             # Lock to manual exposure immediately (same warm-up guard as FishCamera)
             exp, gain = self._step_to_exp_gain(self.exposure_step)
@@ -455,10 +457,32 @@ class CsiCamera:
                 "AnalogueGain": gain,
             })
             self._picam = picam
+            self._current_size = self.output_size
             print("--- [CsiCamera] 初始化成功 ---")
         except Exception as e:
             print(f"--- [CsiCamera] 初始化失敗: {e} ---")
             self._picam = None
+
+    def _reconfigure(self, size):
+        """Stop, reconfigure to new size, restart. Must be called while holding _cam_lock."""
+        if not self._picam:
+            return
+        try:
+            self._picam.stop()
+            config = self._make_config(self._picam, size)
+            self._picam.configure(config)
+            self._picam.start()
+            # Re-apply exposure after reconfigure
+            exp, gain = self._step_to_exp_gain(self.exposure_step)
+            self._picam.set_controls({
+                "AeEnable": False,
+                "ExposureTime": exp,
+                "AnalogueGain": gain,
+            })
+            self._current_size = size
+            print(f"--- [CsiCamera] 重新設定解析度: {size} ---")
+        except Exception as e:
+            print(f"--- [CsiCamera] 重新設定解析度失敗: {e} ---")
 
     # --- step ↔ (ExposureTime µs, AnalogueGain) ---
 
@@ -528,13 +552,17 @@ class CsiCamera:
                 if not self.auto_exposure or not self._picam:
                     break
                 try:
-                    frame = self._picam.capture_array("main")
+                    # Use lores YUV420 stream: Y-plane only, no color conversion needed
+                    yuv = self._picam.capture_array("lores")
                 except Exception:
                     continue
 
-            small = cv2.resize(frame, (self._AUTO_SAMPLE_W, self._AUTO_SAMPLE_H),
-                               interpolation=cv2.INTER_AREA)
-            brightness = float(cv2.cvtColor(small, cv2.COLOR_BGR2GRAY).mean())
+            # Y plane is the first (height * width) bytes of YUV420
+            h, w = yuv.shape[:2]
+            y_plane = yuv[:h * 2 // 3, :]  # luma only
+            small = cv2.resize(y_plane, (self._AUTO_SAMPLE_W, self._AUTO_SAMPLE_H),
+                               interpolation=cv2.INTER_LINEAR)
+            brightness = float(small.mean())
             self._last_brightness = round(brightness, 1)
 
             if not self.auto_exposure:
@@ -598,8 +626,10 @@ class CsiCamera:
 
     def set_output(self, size, quality):
         with self._cam_lock:
-            self.output_size = size
             self.quality = quality
+            if size != self._current_size:
+                self.output_size = size
+                self._reconfigure(size)
 
     # --- reset ---
 
@@ -625,43 +655,43 @@ class CsiCamera:
     # --- frame capture ---
 
     def get_raw_frame(self):
-        """Return BGR numpy array or None."""
+        """Return BGR numpy array or None. Used by water level detector."""
         with self._cam_lock:
             if not self._picam:
                 return None
             try:
-                # picamera2 BGR888 format is actually RGB on this platform
-                frame = self._picam.capture_array("main")
+                # main stream is MJPEG — use lores YUV and convert for raw BGR access
+                yuv = self._picam.capture_array("lores")
             except Exception:
                 return None
-        frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-        return cv2.flip(frame, -1)
+        # Convert YUV420 lores to BGR for OpenCV analysis
+        bgr = cv2.cvtColor(yuv, cv2.COLOR_YUV420p2BGR)
+        return cv2.flip(bgr, -1)
 
     def get_frame(self):
-        """Return (bytes, mime_type) encoded frame for MJPEG stream."""
-        frame = self.get_raw_frame()
-        if frame is None:
-            return None, None
+        """Return (bytes, 'image/jpeg') directly from MJPEGEncoder — no CPU encode."""
         with self._cam_lock:
-            size = self.output_size
-            quality = self.quality
-        if size is not None:
-            frame = cv2.resize(frame, size, interpolation=cv2.INTER_AREA)
-        use_webp = size is not None and size[1] <= 480
-        if use_webp:
-            _, buf = cv2.imencode('.webp', frame, [cv2.IMWRITE_WEBP_QUALITY, quality])
-            return buf.tobytes(), 'image/webp'
-        else:
-            _, buf = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
-            return buf.tobytes(), 'image/jpeg'
+            if not self._picam:
+                return None, None
+            try:
+                buf = self._picam.capture_buffer("main")
+            except Exception:
+                return None, None
+        return bytes(buf), 'image/jpeg'
 
     def measure_brightness(self):
-        frame = self.get_raw_frame()
-        if frame is None:
-            return None
-        small = cv2.resize(frame, (self._AUTO_SAMPLE_W, self._AUTO_SAMPLE_H),
-                           interpolation=cv2.INTER_AREA)
-        return float(cv2.cvtColor(small, cv2.COLOR_BGR2GRAY).mean())
+        with self._cam_lock:
+            if not self._picam:
+                return None
+            try:
+                yuv = self._picam.capture_array("lores")
+            except Exception:
+                return None
+        h = yuv.shape[0]
+        y_plane = yuv[:h * 2 // 3, :]
+        small = cv2.resize(y_plane, (self._AUTO_SAMPLE_W, self._AUTO_SAMPLE_H),
+                           interpolation=cv2.INTER_LINEAR)
+        return float(small.mean())
 
     def set_auto_target(self, brightness):
         self._auto_target_brightness = float(brightness)
