@@ -12,7 +12,7 @@ from flask_apscheduler import APScheduler
 from apscheduler.triggers.cron import CronTrigger
 import atexit
 from hardware.motor_ctrl import FishFeeder
-from hardware.camera_ctrl import FishCamera, enumerate_cameras
+from hardware.camera_ctrl import FishCamera, CsiCamera, enumerate_cameras, _PICAMERA2_AVAILABLE
 from hardware.light_ctrl import LightRelay
 from hardware.water_level import WaterLevelDetector
 
@@ -343,9 +343,26 @@ if not os.path.exists(CONFIG_FILE):
     }
     write_json(CONFIG_FILE, default_config)
 
-# 攝影機分配邏輯：首次自動分配 A/B，之後用 by-path 綁定固定
+# 攝影機分配邏輯：
+#   Camera A → CSI (OV5647) via picamera2，若 picamera2 不可用則 fallback 到 V4L2
+#   Camera B → USB V4L2，用 by-path 綁定固定 port
 def _init_cameras():
     global fish_cam, fish_cam_b
+
+    # --- Camera A: CSI ---
+    if _PICAMERA2_AVAILABLE:
+        try:
+            fish_cam = CsiCamera()
+            fish_cam.set_output((1280, 720), 80)
+            print("[Camera Init] 攝影機 A (CSI/OV5647) 初始化成功")
+        except Exception as e:
+            print(f"[Camera Init] 攝影機 A (CSI) 初始化失敗，fallback 到 V4L2: {e}")
+            fish_cam = None
+    else:
+        print("[Camera Init] picamera2 不可用，攝影機 A 將嘗試 V4L2 fallback")
+        fish_cam = None
+
+    # --- Camera B: USB V4L2，by-path 綁定 ---
     try:
         cameras = enumerate_cameras()
     except Exception as e:
@@ -356,54 +373,32 @@ def _init_cameras():
         config = read_json(CONFIG_FILE)
 
     camera_config = config.get('camera_config', {})
-    assigned_indices = {}
+    b_index = None
 
-    if not camera_config:
-        # 首次初始化：按順序分配 A、B
-        if len(cameras) >= 1:
-            assigned_indices['A'] = cameras[0]['index']
-            camera_config['A'] = cameras[0]['by_path'] or f"video{cameras[0]['index']}"
-        if len(cameras) >= 2:
-            assigned_indices['B'] = cameras[1]['index']
-            camera_config['B'] = cameras[1]['by_path'] or f"video{cameras[1]['index']}"
-
-        if assigned_indices:
+    if not camera_config.get('B'):
+        # 首次初始化：把第一台找到的 USB 攝影機分配給 B
+        if cameras:
+            b_index = cameras[0]['index']
+            camera_config['B'] = cameras[0]['by_path'] or f"video{cameras[0]['index']}"
             try:
-                safe_update_config(lambda cfg: {
-                    **cfg,
-                    "camera_config": camera_config
-                })
-                print(f"[Camera Init] 首次初始化: A={assigned_indices.get('A')}, B={assigned_indices.get('B')}")
+                safe_update_config(lambda cfg: {**cfg, "camera_config": camera_config})
+                print(f"[Camera Init] 攝影機 B 首次分配: index={b_index}, by_path={camera_config['B']}")
             except Exception as e:
                 print(f"[Camera Init] 保存 camera_config 失敗: {e}")
     else:
-        # 已有紀錄：用 by-path 比對找到對應的 index
-        for cam_id in ['A', 'B']:
-            by_path = camera_config.get(cam_id)
-            if by_path:
-                found = False
-                for cam in cameras:
-                    if cam['by_path'] == by_path or (cam['by_path'] is None and by_path == f"video{cam['index']}"):
-                        assigned_indices[cam_id] = cam['index']
-                        found = True
-                        break
-                if not found:
-                    print(f"[Camera Init] 無法找到攝影機 {cam_id} (by_path={by_path})")
+        by_path = camera_config['B']
+        for cam in cameras:
+            if cam['by_path'] == by_path or (cam['by_path'] is None and by_path == f"video{cam['index']}"):
+                b_index = cam['index']
+                break
+        if b_index is None:
+            print(f"[Camera Init] 無法找到攝影機 B (by_path={by_path})")
 
-    if 'A' in assigned_indices:
+    if b_index is not None:
         try:
-            fish_cam = FishCamera(device_index=assigned_indices['A'])
-            fish_cam.set_output((1280, 720), 80)
-            print(f"[Camera Init] 攝影機 A 初始化成功 (index={assigned_indices['A']})")
-        except Exception as e:
-            print(f"[Camera Init] 攝影機 A 初始化失敗: {e}")
-            fish_cam = None
-
-    if 'B' in assigned_indices:
-        try:
-            fish_cam_b = FishCamera(device_index=assigned_indices['B'])
+            fish_cam_b = FishCamera(device_index=b_index)
             fish_cam_b.set_output((1280, 720), 80)
-            print(f"[Camera Init] 攝影機 B 初始化成功 (index={assigned_indices['B']})")
+            print(f"[Camera Init] 攝影機 B (USB) 初始化成功 (index={b_index})")
         except Exception as e:
             print(f"[Camera Init] 攝影機 B 初始化失敗: {e}")
             fish_cam_b = None
