@@ -4,11 +4,13 @@ import time
 import os
 import threading
 import subprocess
+import queue
 
 # picamera2 / libcamera only available on Pi with CSI camera enabled
 try:
     from picamera2 import Picamera2
-    from libcamera import controls as libcamera_controls
+    from picamera2.encoders import MJPEGEncoder
+    from picamera2.outputs import FileOutput
     _PICAMERA2_AVAILABLE = True
 except ImportError:
     _PICAMERA2_AVAILABLE = False
@@ -362,6 +364,23 @@ class FishCamera:
             self.cap.release()
 
 
+class _FrameOutput:
+    """picamera2 Output that keeps only the latest encoded JPEG frame."""
+
+    def __init__(self):
+        self._frame = None
+        self._lock = threading.Lock()
+
+    def outputframe(self, frame, keyframe=True, timestamp=None):
+        data = bytes(frame)
+        with self._lock:
+            self._frame = data
+
+    def get_frame(self):
+        with self._lock:
+            return self._frame
+
+
 class CsiCamera:
     """Camera A driver for OV5647 CSI module via picamera2/libcamera.
 
@@ -371,6 +390,10 @@ class CsiCamera:
 
     Step ladder mirrors FishCamera: 0..STEPS mapped to three zones —
     low-gain dark end, log-exposure mid range, high-gain bright end.
+
+    Streaming uses MJPEGEncoder (hardware JPEG on Pi VPU) writing into
+    _FrameOutput; get_frame() returns the latest encoded bytes with zero
+    CPU encode cost.
     """
 
     STEPS = 20
@@ -399,7 +422,7 @@ class CsiCamera:
 
         self.quality = 80
         self.output_size = (1280, 720)
-        self._current_size = None   # tracks what picamera2 is currently configured to
+        self._current_size = None
         self._cam_lock = threading.Lock()
 
         self.auto_exposure = True
@@ -413,6 +436,7 @@ class CsiCamera:
         self._last_brightness = None
 
         self._picam = None
+        self._frame_output = _FrameOutput()
         self.discover_camera()
         if self.auto_exposure:
             self._start_auto_thread()
@@ -420,10 +444,10 @@ class CsiCamera:
     # --- init ---
 
     def _make_config(self, picam, size):
-        """Build a video config with MJPEGEncoder main stream at given size."""
+        """Video config: main stream for MJPEGEncoder, lores YUV420 for brightness sampling."""
         hw_size = size if size is not None else (1920, 1080)
         return picam.create_video_configuration(
-            main={"size": hw_size, "format": "MJPEG"},
+            main={"size": hw_size},
             lores={"size": (self._AUTO_SAMPLE_W * 4, self._AUTO_SAMPLE_H * 4), "format": "YUV420"},
             controls={"FrameRate": 30},
             buffer_count=2,
@@ -433,7 +457,6 @@ class CsiCamera:
         print("--- [CsiCamera] 初始化 CSI (OV5647 fixed-focus) ---")
         try:
             picam = Picamera2()
-            # Query actual exposure limits from camera metadata
             cam_props = picam.camera_properties
             limits = cam_props.get("ExposureTimeRange")
             if limits:
@@ -443,13 +466,10 @@ class CsiCamera:
 
             config = self._make_config(picam, self.output_size)
             picam.configure(config)
-            picam.start()
-            time.sleep(2)   # sensor warm-up
-            # Flush a few frames
-            for _ in range(5):
-                picam.capture_buffer("main")
+            self._frame_output = _FrameOutput()
+            picam.start_recording(MJPEGEncoder(), FileOutput(self._frame_output))
+            time.sleep(2)   # sensor warm-up + let encoder fill first frames
 
-            # Lock to manual exposure immediately (same warm-up guard as FishCamera)
             exp, gain = self._step_to_exp_gain(self.exposure_step)
             picam.set_controls({
                 "AeEnable": False,
@@ -464,15 +484,15 @@ class CsiCamera:
             self._picam = None
 
     def _reconfigure(self, size):
-        """Stop, reconfigure to new size, restart. Must be called while holding _cam_lock."""
+        """Stop recording, reconfigure to new size, restart. Must hold _cam_lock."""
         if not self._picam:
             return
         try:
-            self._picam.stop()
+            self._picam.stop_recording()
             config = self._make_config(self._picam, size)
             self._picam.configure(config)
-            self._picam.start()
-            # Re-apply exposure after reconfigure
+            self._frame_output = _FrameOutput()
+            self._picam.start_recording(MJPEGEncoder(), FileOutput(self._frame_output))
             exp, gain = self._step_to_exp_gain(self.exposure_step)
             self._picam.set_controls({
                 "AeEnable": False,
@@ -551,15 +571,16 @@ class CsiCamera:
             with self._cam_lock:
                 if not self.auto_exposure or not self._picam:
                     break
-                try:
-                    # Use lores YUV420 stream: Y-plane only, no color conversion needed
-                    yuv = self._picam.capture_array("lores")
-                except Exception:
-                    continue
+                picam = self._picam
 
-            # Y plane is the first (height * width) bytes of YUV420
-            h, w = yuv.shape[:2]
-            y_plane = yuv[:h * 2 // 3, :]  # luma only
+            # capture_array outside lock — picamera2 is thread-safe for capture calls
+            try:
+                yuv = picam.capture_array("lores")
+            except Exception:
+                continue
+
+            h = yuv.shape[0]
+            y_plane = yuv[:h * 2 // 3, :]
             small = cv2.resize(y_plane, (self._AUTO_SAMPLE_W, self._AUTO_SAMPLE_H),
                                interpolation=cv2.INTER_LINEAR)
             brightness = float(small.mean())
@@ -639,7 +660,7 @@ class CsiCamera:
             print("--- [CsiCamera] 重置 CSI 鏡頭 ---")
             if self._picam:
                 try:
-                    self._picam.stop()
+                    self._picam.stop_recording()
                     self._picam.close()
                 except Exception:
                     pass
@@ -657,36 +678,32 @@ class CsiCamera:
     def get_raw_frame(self):
         """Return BGR numpy array or None. Used by water level detector."""
         with self._cam_lock:
-            if not self._picam:
-                return None
-            try:
-                # main stream is MJPEG — use lores YUV and convert for raw BGR access
-                yuv = self._picam.capture_array("lores")
-            except Exception:
-                return None
-        # Convert YUV420 lores to BGR for OpenCV analysis
+            picam = self._picam
+        if not picam:
+            return None
+        try:
+            yuv = picam.capture_array("lores")
+        except Exception:
+            return None
         bgr = cv2.cvtColor(yuv, cv2.COLOR_YUV420p2BGR)
         return cv2.flip(bgr, -1)
 
     def get_frame(self):
-        """Return (bytes, 'image/jpeg') directly from MJPEGEncoder — no CPU encode."""
-        with self._cam_lock:
-            if not self._picam:
-                return None, None
-            try:
-                buf = self._picam.capture_buffer("main")
-            except Exception:
-                return None, None
-        return bytes(buf), 'image/jpeg'
+        """Return (bytes, 'image/jpeg') from MJPEGEncoder — no CPU encode."""
+        data = self._frame_output.get_frame()
+        if data:
+            return data, 'image/jpeg'
+        return None, None
 
     def measure_brightness(self):
         with self._cam_lock:
-            if not self._picam:
-                return None
-            try:
-                yuv = self._picam.capture_array("lores")
-            except Exception:
-                return None
+            picam = self._picam
+        if not picam:
+            return None
+        try:
+            yuv = picam.capture_array("lores")
+        except Exception:
+            return None
         h = yuv.shape[0]
         y_plane = yuv[:h * 2 // 3, :]
         small = cv2.resize(y_plane, (self._AUTO_SAMPLE_W, self._AUTO_SAMPLE_H),
@@ -700,7 +717,7 @@ class CsiCamera:
         self._stop_auto_thread()
         if self._picam:
             try:
-                self._picam.stop()
+                self._picam.stop_recording()
                 self._picam.close()
             except Exception:
                 pass
