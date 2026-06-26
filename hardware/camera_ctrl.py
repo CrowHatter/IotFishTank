@@ -9,7 +9,7 @@ import queue
 
 # picamera2 / libcamera only available on Pi with CSI camera enabled
 try:
-    from picamera2 import Picamera2
+    from picamera2 import Picamera2, Transform
     from picamera2.encoders import MJPEGEncoder
     from picamera2.outputs import FileOutput
     _PICAMERA2_AVAILABLE = True
@@ -451,6 +451,7 @@ class CsiCamera:
         return picam.create_video_configuration(
             main={"size": hw_size},
             lores={"size": (self._AUTO_SAMPLE_W * 4, self._AUTO_SAMPLE_H * 4), "format": "YUV420"},
+            transform=Transform(vflip=True, hflip=True),
             controls={"FrameRate": 30},
             buffer_count=2,
         )
@@ -698,8 +699,7 @@ class CsiCamera:
             yuv = picam.capture_array("lores")
         except Exception:
             return None
-        bgr = cv2.cvtColor(yuv, cv2.COLOR_YUV420p2BGR)
-        return cv2.flip(bgr, -1)
+        return cv2.cvtColor(yuv, cv2.COLOR_YUV420p2BGR)
 
     def get_frame(self):
         """Return (bytes, 'image/jpeg') from MJPEGEncoder — no CPU encode."""
