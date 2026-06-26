@@ -1,4 +1,5 @@
 import cv2
+import io
 import math
 import time
 import os
@@ -364,17 +365,18 @@ class FishCamera:
             self.cap.release()
 
 
-class _FrameOutput:
-    """picamera2 Output that keeps only the latest encoded JPEG frame."""
+class _FrameOutput(io.BufferedIOBase):
+    """FileOutput 相容的接收器，保存最新一幀 MJPEGEncoder 輸出的 JPEG bytes。
+    FileOutput 呼叫 write()，不是 outputframe()，因此必須繼承 BufferedIOBase。"""
 
     def __init__(self):
         self._frame = None
         self._lock = threading.Lock()
 
-    def outputframe(self, frame, keyframe=True, timestamp=None):
-        data = bytes(frame)
+    def write(self, buf):
         with self._lock:
-            self._frame = data
+            self._frame = bytes(buf)
+        return len(buf)
 
     def get_frame(self):
         with self._lock:
