@@ -478,11 +478,12 @@ class CsiCamera:
                 picam.configure(config)
                 self._frame_output = _FrameOutput()
                 picam.start_recording(MJPEGEncoder(), FileOutput(self._frame_output))
-                time.sleep(2)   # sensor warm-up + let encoder fill first frames
+                time.sleep(3)   # 讓 AWB/AE 先收斂再鎖定，改善色彩準確度
 
                 exp, gain = self._step_to_exp_gain(self.exposure_step)
                 picam.set_controls({
                     "AeEnable": False,
+                    "AwbEnable": False,
                     "ExposureTime": exp,
                     "AnalogueGain": gain,
                 })
