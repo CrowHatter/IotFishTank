@@ -450,7 +450,7 @@ class CsiCamera:
         """Video config: main stream for MJPEGEncoder, lores YUV420 for brightness sampling."""
         hw_size = size if size is not None else (1920, 1080)
         return picam.create_video_configuration(
-            main={"size": hw_size},
+            main={"size": hw_size, "format": "YUV420"},
             lores={"size": (self._AUTO_SAMPLE_W * 4, self._AUTO_SAMPLE_H * 4), "format": "YUV420"},
             transform=Transform(vflip=True, hflip=True),
             controls={"FrameRate": 30},
