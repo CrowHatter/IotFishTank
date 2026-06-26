@@ -453,8 +453,20 @@ class CsiCamera:
             buffer_count=2,
         )
 
+    @staticmethod
+    def _force_release():
+        """建立並立即關閉一個 Picamera2 實例，清除 libcamera 殘留的 Configured 狀態。
+        gunicorn worker 被 SIGKILL 後鏡頭可能卡在 Configured，下次 acquire() 就會失敗。"""
+        try:
+            tmp = Picamera2()
+            tmp.close()
+        except Exception:
+            pass
+        time.sleep(0.5)
+
     def discover_camera(self):
         print("--- [CsiCamera] 初始化 CSI (OV5647 fixed-focus) ---")
+        CsiCamera._force_release()
         try:
             picam = Picamera2()
             cam_props = picam.camera_properties
