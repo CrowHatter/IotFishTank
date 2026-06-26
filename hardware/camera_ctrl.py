@@ -453,47 +453,46 @@ class CsiCamera:
             buffer_count=2,
         )
 
-    @staticmethod
-    def _force_release():
-        """建立並立即關閉一個 Picamera2 實例，清除 libcamera 殘留的 Configured 狀態。
-        gunicorn worker 被 SIGKILL 後鏡頭可能卡在 Configured，下次 acquire() 就會失敗。"""
-        try:
-            tmp = Picamera2()
-            tmp.close()
-        except Exception:
-            pass
-        time.sleep(0.5)
-
     def discover_camera(self):
         print("--- [CsiCamera] 初始化 CSI (OV5647 fixed-focus) ---")
-        CsiCamera._force_release()
-        try:
-            picam = Picamera2()
-            cam_props = picam.camera_properties
-            limits = cam_props.get("ExposureTimeRange")
-            if limits:
-                self._exp_min_us = limits[0]
-                self._exp_max_us = min(limits[1], self._EXP_MAX_US)
-            print(f"--- [CsiCamera] 曝光範圍: {self._exp_min_us}–{self._exp_max_us} µs ---")
+        # libcamera 狀態機在前一個 worker 被 SIGKILL 後可能殘留 Configured 狀態；
+        # 重試最多 3 次，每次等待 2 秒讓核心完成裝置釋放後再試。
+        for attempt in range(3):
+            if attempt > 0:
+                print(f"--- [CsiCamera] 重試初始化 (第 {attempt + 1} 次)... ---")
+                time.sleep(2)
+            try:
+                picam = Picamera2()
+                cam_props = picam.camera_properties
+                limits = cam_props.get("ExposureTimeRange")
+                if limits:
+                    self._exp_min_us = limits[0]
+                    self._exp_max_us = min(limits[1], self._EXP_MAX_US)
+                print(f"--- [CsiCamera] 曝光範圍: {self._exp_min_us}–{self._exp_max_us} µs ---")
 
-            config = self._make_config(picam, self.output_size)
-            picam.configure(config)
-            self._frame_output = _FrameOutput()
-            picam.start_recording(MJPEGEncoder(), FileOutput(self._frame_output))
-            time.sleep(2)   # sensor warm-up + let encoder fill first frames
+                config = self._make_config(picam, self.output_size)
+                picam.configure(config)
+                self._frame_output = _FrameOutput()
+                picam.start_recording(MJPEGEncoder(), FileOutput(self._frame_output))
+                time.sleep(2)   # sensor warm-up + let encoder fill first frames
 
-            exp, gain = self._step_to_exp_gain(self.exposure_step)
-            picam.set_controls({
-                "AeEnable": False,
-                "ExposureTime": exp,
-                "AnalogueGain": gain,
-            })
-            self._picam = picam
-            self._current_size = self.output_size
-            print("--- [CsiCamera] 初始化成功 ---")
-        except Exception as e:
-            print(f"--- [CsiCamera] 初始化失敗: {e} ---")
-            self._picam = None
+                exp, gain = self._step_to_exp_gain(self.exposure_step)
+                picam.set_controls({
+                    "AeEnable": False,
+                    "ExposureTime": exp,
+                    "AnalogueGain": gain,
+                })
+                self._picam = picam
+                self._current_size = self.output_size
+                print("--- [CsiCamera] 初始化成功 ---")
+                return
+            except Exception as e:
+                print(f"--- [CsiCamera] 初始化失敗 (attempt {attempt + 1}/3): {e} ---")
+                try:
+                    picam.close()
+                except Exception:
+                    pass
+        self._picam = None
 
     def _reconfigure(self, size):
         """Stop recording, reconfigure to new size, restart. Must hold _cam_lock."""
