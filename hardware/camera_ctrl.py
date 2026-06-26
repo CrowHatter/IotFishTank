@@ -9,9 +9,10 @@ import queue
 
 # picamera2 / libcamera only available on Pi with CSI camera enabled
 try:
-    from picamera2 import Picamera2, Transform
+    from picamera2 import Picamera2
     from picamera2.encoders import MJPEGEncoder
     from picamera2.outputs import FileOutput
+    from libcamera import Transform
     _PICAMERA2_AVAILABLE = True
 except ImportError:
     _PICAMERA2_AVAILABLE = False
