@@ -106,39 +106,40 @@ _water_frames = []
 _water_frames_lock = threading.Lock()
 
 def _write_water_status(result):
-    """把偵測結果寫回 device_status。state == 'low' 時記警示旗標（補水馬達尚未實裝）。"""
+    """把偵測結果寫回 device_status。sensor 與 OpenCV 結果獨立存放。"""
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+    sensor_triggered = result.get('sensor_triggered', False)
+    cv_state = result.get('cv_state', 'unknown')
     def _update(cfg):
         ds = dict(cfg["device_status"])
-        ds['water_level_state'] = result.get('state', 'unknown')
+        ds['water_level_state'] = cv_state
         ds['water_level_percent'] = result.get('percent')
         ds['water_level_gap_px'] = result.get('gap_px')
         ds['last_water_level_check'] = now_str
-        ds['water_level_alert'] = (result.get('state') == 'low')
-        ds['water_sensor_triggered'] = result.get('sensor_triggered', False)
+        ds['water_sensor_triggered'] = sensor_triggered
+        ds['water_level_alert'] = sensor_triggered or (cv_state == 'low')
         return {**cfg, "device_status": ds}
     safe_update_config(_update)
-    if result.get('state') == 'low':
-        sensor_str = "（感測器確認）" if result.get('sensor_triggered') else "（僅視覺偵測）"
-        print(f"[{now_str}] ⚠️ 水位過低警示 gap={result.get('gap_px')}px "
-              f"({result.get('percent')}%) {sensor_str}（補水馬達尚未實裝）")
+    if sensor_triggered or cv_state == 'low':
+        sensor_str = "感測器：過低" if sensor_triggered else "感測器：正常"
+        cv_str = f"視覺：{cv_state} {result.get('percent')}% gap={result.get('gap_px')}px"
+        print(f"[{now_str}] ⚠️ 水位警示 {sensor_str}／{cv_str}（補水馬達尚未實裝）")
 
 def perform_water_level_check():
     """即時擷取多幀偵測（OpenCV）+ 讀取液位感測器，寫回 device_status，回傳結果 dict。
-    水位判定邏輯：感測器觸發（NPN HIGH）即為 'low'，優先於 OpenCV 結果；
-    感測器未觸發時以 OpenCV 結果為準（可反映水位%，感測器只有 on/off）。"""
+    兩者結果獨立：cv_state/percent/gap_px 來自 OpenCV，sensor_triggered 來自感測器。"""
     if water_detector is None:
-        return {'state': 'unknown', 'reason': '水位偵測器未初始化'}
-    result = water_detector.detect()
+        cv_result = {'cv_state': 'unknown', 'reason': '水位偵測器未初始化',
+                     'percent': None, 'gap_px': None}
+    else:
+        raw = water_detector.detect()
+        cv_result = {**raw, 'cv_state': raw.get('state', 'unknown')}
 
     sensor = water_sensor.state()
-    result['sensor_triggered'] = sensor['sensor_triggered']
-    # 感測器觸發時強制覆蓋 state 為 low（感測器黏貼位置即為警戒水位）
-    if sensor['sensor_triggered']:
-        result['state'] = 'low'
+    cv_result['sensor_triggered'] = sensor['sensor_triggered']
 
-    _write_water_status(result)
-    return result
+    _write_water_status(cv_result)
+    return cv_result
 
 def _capture_water_frames(n):
     frames = []
@@ -682,9 +683,11 @@ def water_level_tune():
         ok, buf = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 80])
         return base64.b64encode(buf.tobytes()).decode('ascii') if ok else None
 
-    _write_water_status(result)
+    tune_result = {**result, 'cv_state': result.get('state', 'unknown'),
+                   'sensor_triggered': water_sensor.state()['sensor_triggered']}
+    _write_water_status(tune_result)
     cfg = read_json(CONFIG_FILE).get('water_level_config', {})
-    return jsonify({"status": "success", "result": result, "config": cfg,
+    return jsonify({"status": "success", "result": tune_result, "config": cfg,
                     "image": _enc(color_img), "gray_image": _enc(gray_img)})
 
 @app.route('/api/water_level/calibrate', methods=['POST'])
