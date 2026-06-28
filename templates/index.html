@@ -151,8 +151,7 @@
                 <p class="text-gray-400 text-xs mb-1 uppercase tracking-widest font-bold">Status 狀態</p>
                 <p class="text-gray-600 text-sm">餵食 A：<span id="last-fed-A" class="text-blue-600 font-bold">載入中...</span></p>
                 <p class="text-gray-600 text-sm">餵食 B：<span id="last-fed-B" class="text-blue-600 font-bold">載入中...</span></p>
-                <p class="text-gray-600 text-sm">水位感測器：<span id="water-sensor" class="font-bold text-gray-400">載入中...</span></p>
-                <p class="text-gray-600 text-sm">水位視覺：<span id="water-level" class="font-bold text-gray-400">載入中...</span></p>
+                <p class="text-gray-600 text-sm">水位檢測：<span id="water-level" class="font-bold text-gray-400">載入中...</span>・<span id="water-sensor" class="font-bold text-gray-400">--</span></p>
             </div>
             <div class="text-right">
                 <span id="temp-display" class="text-3xl font-mono font-black text-blue-500 tracking-tighter">26.5°C</span>
@@ -257,9 +256,8 @@
                 </div>
                 <!-- 結果摘要 -->
                 <div class="bg-white rounded-xl p-4 border border-gray-100 text-sm space-y-1">
-                    <p class="text-gray-600">感測器：<span id="wt-sensor" class="font-bold">--</span></p>
-                    <p class="text-gray-600">視覺判讀：<span id="wt-state" class="font-bold">--</span></p>
-                    <p class="text-gray-600">水位：<span id="wt-percent" class="font-bold">--</span> ・ gap：<span id="wt-gap" class="font-mono">--</span> px</p>
+                    <p class="text-gray-600">水位檢測：<span id="wt-percent" class="font-bold text-blue-600">--</span>・<span id="wt-sensor" class="font-bold">--</span> <span id="wt-state" class="text-gray-400 text-xs"></span></p>
+                    <p class="text-gray-600">gap：<span id="wt-gap" class="font-mono">--</span> px</p>
                     <p class="text-gray-600">邊緣強度：<span id="wt-peak" class="font-mono">--</span> ・ 信心：<span id="wt-conf" class="font-mono">--</span></p>
                     <p class="text-gray-400 text-xs">圖例：黃線=膠帶底　橘線=容許下限　綠/紅線=水面　淺藍=分析區段</p>
                 </div>
@@ -502,7 +500,20 @@
         }
 
         function updateWaterLevelUI(status) {
-            // 感測器
+            // 視覺：只顯示 %
+            const el = document.getElementById('water-level');
+            if (el) {
+                const pct = status.water_level_percent;
+                el.classList.remove('text-gray-400', 'text-blue-600');
+                if (pct !== null && pct !== undefined) {
+                    el.classList.add('text-blue-600');
+                    el.innerText = pct + '%';
+                } else {
+                    el.classList.add('text-gray-400');
+                    el.innerText = '--';
+                }
+            }
+            // 感測器：顏色與過低/正常文字
             const sensorEl = document.getElementById('water-sensor');
             if (sensorEl) {
                 const triggered = status.water_sensor_triggered;
@@ -515,25 +526,8 @@
                     sensorEl.innerText = '正常';
                 } else {
                     sensorEl.classList.add('text-gray-400');
-                    sensorEl.innerText = '無紀錄';
+                    sensorEl.innerText = '--';
                 }
-            }
-            // OpenCV 視覺
-            const el = document.getElementById('water-level');
-            if (!el) return;
-            const state = status.water_level_state;
-            const pct = status.water_level_percent;
-            const pctStr = (pct === null || pct === undefined) ? '--' : pct + '%';
-            el.classList.remove('text-gray-400', 'text-green-600', 'text-red-600');
-            if (state === 'low') {
-                el.classList.add('text-red-600');
-                el.innerText = `${pctStr}・過低`;
-            } else if (state === 'ok' || state === 'normal') {
-                el.classList.add('text-green-600');
-                el.innerText = `${pctStr}・正常`;
-            } else {
-                el.classList.add('text-gray-400');
-                el.innerText = pct != null ? `${pctStr}・無法判讀` : '無紀錄';
             }
         }
 
@@ -650,21 +644,21 @@
         }
 
         function renderTuneResult(result) {
-            // 感測器
+            // 視覺 %
+            const pct = result.percent;
+            document.getElementById('wt-percent').innerText = (pct !== null && pct !== undefined) ? pct + '%' : '--';
+            // 感測器：顏色與過低/正常
             const sensorEl = document.getElementById('wt-sensor');
             if (sensorEl) {
                 const triggered = result.sensor_triggered;
                 sensorEl.className = 'font-bold ' + (triggered ? 'text-red-600' : 'text-green-600');
                 sensorEl.innerText = triggered ? '過低' : '正常';
             }
-            // OpenCV 視覺
+            // OpenCV 判讀：灰色小字輔助
             const stateEl = document.getElementById('wt-state');
             const cvState = result.cv_state ?? result.state;
-            const map = { ok: ['正常', 'text-green-600'], low: ['過低', 'text-red-600'] };
-            const [label, cls] = map[cvState] || [`無法判讀 (${result.reason || 'unknown'})`, 'text-gray-400'];
-            stateEl.className = 'font-bold ' + cls;
-            stateEl.innerText = label;
-            document.getElementById('wt-percent').innerText = (result.percent ?? '--') + (result.percent != null ? '%' : '');
+            const cvMap = { ok: '視覺:正常', low: '視覺:過低' };
+            stateEl.innerText = cvMap[cvState] ?? `視覺:無法判讀`;
             document.getElementById('wt-gap').innerText = result.gap_px ?? '--';
             document.getElementById('wt-conf').innerText = result.confidence ?? '--';
             document.getElementById('wt-peak').innerText = result.peak_grad ?? '--';
