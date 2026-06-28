@@ -18,14 +18,14 @@ _DEBOUNCE_DELAY_S = 0.05
 class WaterLevelSensor:
     """才嘉科技外貼式非接觸液位感測器（NPN 輸出，DC 5-12V）。
 
-    NPN 邏輯：
-      - 感測面偵測到液體 → 輸出 LOW  → 水位正常
-      - 感測面無液體     → 輸出 HIGH → 水位過低
+    NPN 開集極邏輯（需搭配上拉電阻）：
+      - 感測面偵測到液體 → NPN 導通，拉低 → GPIO 讀到 LOW(0) → 水位正常
+      - 感測面無液體     → NPN 截止，上拉電阻拉高 → GPIO 讀到 HIGH(1) → 水位過低
 
     Pin 腳接法（BCM）：
       VCC  → 5V（實體腳位 2 或 4）
       GND  → GND（實體腳位 6）
-      OUT  → GPIO 16（實體腳位 36），加 10kΩ 下拉電阻接 GND
+      OUT  → GPIO 16（實體腳位 36）
     """
 
     def __init__(self, pin=SENSOR_PIN):
@@ -33,13 +33,13 @@ class WaterLevelSensor:
         if GPIO_AVAILABLE:
             GPIO.setwarnings(False)
             GPIO.setmode(GPIO.BCM)
-            # 使用內建下拉；若外部已接 10kΩ 下拉可改 GPIO.PUD_OFF
-            GPIO.setup(self.pin, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
+            # NPN 開集極：必須用上拉，感測器才能把線路拉低
+            GPIO.setup(self.pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
         else:
             print(f"[Mock] WaterLevelSensor 初始化 pin={self.pin}（無 GPIO，降級為 mock）")
 
     def read_raw(self):
-        """讀一次原始訊號，回傳 True（HIGH = 過低）或 False（LOW = 正常）。
+        """讀一次原始訊號，回傳 True（HIGH = NPN 截止 = 過低）或 False（LOW = NPN 導通 = 正常）。
         無 GPIO 時固定回傳 False（模擬正常）。"""
         if not GPIO_AVAILABLE:
             return False
