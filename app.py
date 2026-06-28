@@ -15,6 +15,7 @@ from hardware.motor_ctrl import FishFeeder
 from hardware.camera_ctrl import FishCamera, CsiCamera, enumerate_cameras, _PICAMERA2_AVAILABLE
 from hardware.light_ctrl import LightRelay
 from hardware.water_level import WaterLevelDetector
+from hardware.water_sensor import WaterLevelSensor
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'fish-tank-secret-key-99b3awiet456qr4ojy@@##%&*%KGrkyorlwerk84*/*+59+r5*8giJ*J($)#' 
@@ -35,6 +36,9 @@ fish_cam_b = None
 
 light_relay = LightRelay()
 atexit.register(light_relay.cleanup)
+
+water_sensor = WaterLevelSensor()
+atexit.register(water_sensor.cleanup)
 
 # 水位偵測器：參數於 config 載入後再套用（見下方 _init_water_detector）
 water_detector = None
@@ -111,17 +115,28 @@ def _write_water_status(result):
         ds['water_level_gap_px'] = result.get('gap_px')
         ds['last_water_level_check'] = now_str
         ds['water_level_alert'] = (result.get('state') == 'low')
+        ds['water_sensor_triggered'] = result.get('sensor_triggered', False)
         return {**cfg, "device_status": ds}
     safe_update_config(_update)
     if result.get('state') == 'low':
+        sensor_str = "（感測器確認）" if result.get('sensor_triggered') else "（僅視覺偵測）"
         print(f"[{now_str}] ⚠️ 水位過低警示 gap={result.get('gap_px')}px "
-              f"({result.get('percent')}%)（補水馬達尚未實裝）")
+              f"({result.get('percent')}%) {sensor_str}（補水馬達尚未實裝）")
 
 def perform_water_level_check():
-    """即時擷取多幀偵測，寫回 device_status，回傳結果 dict。"""
+    """即時擷取多幀偵測（OpenCV）+ 讀取液位感測器，寫回 device_status，回傳結果 dict。
+    水位判定邏輯：感測器觸發（NPN HIGH）即為 'low'，優先於 OpenCV 結果；
+    感測器未觸發時以 OpenCV 結果為準（可反映水位%，感測器只有 on/off）。"""
     if water_detector is None:
         return {'state': 'unknown', 'reason': '水位偵測器未初始化'}
     result = water_detector.detect()
+
+    sensor = water_sensor.state()
+    result['sensor_triggered'] = sensor['sensor_triggered']
+    # 感測器觸發時強制覆蓋 state 為 low（感測器黏貼位置即為警戒水位）
+    if sensor['sensor_triggered']:
+        result['state'] = 'low'
+
     _write_water_status(result)
     return result
 
@@ -338,6 +353,7 @@ if not os.path.exists(CONFIG_FILE):
         "device_status": {
             "light": "off", "last_fed_A": "Never", "last_fed_B": "Never",
             "water_level_state": "unknown", "water_level_percent": None,
+            "water_sensor_triggered": False,
             "last_water_level_check": "Never"
         }
     }
@@ -428,6 +444,7 @@ def _ensure_water_config():
         ds = dict(cfg.get('device_status', {}))
         ds.setdefault('water_level_state', 'unknown')
         ds.setdefault('water_level_percent', None)
+        ds.setdefault('water_sensor_triggered', False)
         ds.setdefault('last_water_level_check', 'Never')
         return {**cfg, "water_level_config": wlc, "device_status": ds}
     safe_update_config(_update)
