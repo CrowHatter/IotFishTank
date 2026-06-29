@@ -1,5 +1,3 @@
-import time
-
 try:
     import RPi.GPIO as GPIO
     GPIO_AVAILABLE = True
@@ -7,15 +5,15 @@ except ImportError:
     GPIO_AVAILABLE = False
 
 PUMP_PIN = 26
-PULSE_DURATION = 1
 
 
 class PumpRelay:
-    """抽水馬達繼電器控制（Active-Low 脈衝切換，BCM 26）。
+    """抽水馬達繼電器控制（Active-Low 電平，BCM 26）。
 
-    與 LightRelay 相同型號繼電器，差異在於自身追蹤 _state，
-    呼叫端無需外部管理當前狀態。
-    上電初始狀態：馬達 OFF（GPIO HIGH）。
+    普通繼電器邏輯：
+      GPIO HIGH（3.3V）→ 繼電器斷開，馬達停止
+      GPIO LOW（GND）  → 繼電器導通，馬達運轉
+    上電初始狀態：HIGH，馬達 OFF。
     """
 
     def __init__(self, pin=PUMP_PIN):
@@ -28,23 +26,20 @@ class PumpRelay:
         else:
             print(f"[Mock] PumpRelay 初始化 pin={self.pin}（無 GPIO，降級為 mock）")
 
-    def _pulse(self):
-        if GPIO_AVAILABLE:
-            GPIO.output(self.pin, GPIO.LOW)
-            time.sleep(PULSE_DURATION)
-            GPIO.output(self.pin, GPIO.HIGH)
-        else:
-            next_state = 'on' if self._state == 'off' else 'off'
-            print(f"[Mock] GPIO{self.pin} LOW pulse（狀態 {self._state} → {next_state}）")
-
     def turn_on(self):
         if self._state != 'on':
-            self._pulse()
+            if GPIO_AVAILABLE:
+                GPIO.output(self.pin, GPIO.LOW)
+            else:
+                print(f"[Mock] GPIO{self.pin} → LOW（馬達開啟）")
             self._state = 'on'
 
     def turn_off(self):
         if self._state != 'off':
-            self._pulse()
+            if GPIO_AVAILABLE:
+                GPIO.output(self.pin, GPIO.HIGH)
+            else:
+                print(f"[Mock] GPIO{self.pin} → HIGH（馬達關閉）")
             self._state = 'off'
 
     @property
