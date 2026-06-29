@@ -151,7 +151,7 @@
                 <p class="text-gray-400 text-xs mb-1 uppercase tracking-widest font-bold">Status 狀態</p>
                 <p class="text-gray-600 text-sm">餵食 A：<span id="last-fed-A" class="text-blue-600 font-bold">載入中...</span></p>
                 <p class="text-gray-600 text-sm">餵食 B：<span id="last-fed-B" class="text-blue-600 font-bold">載入中...</span></p>
-                <p class="text-gray-600 text-sm">水位檢測：<span id="water-level" class="font-bold text-gray-400">載入中...</span>・<span id="water-sensor" class="font-bold text-gray-400">--</span></p>
+                <p class="text-gray-600 text-sm">水位檢測：<span id="water-level" class="font-bold text-gray-400">載入中...</span>・<span id="water-sensor" class="font-bold text-gray-400">--</span><span id="water-refilling" class="hidden font-bold text-blue-500 ml-1 animate-pulse">💧 加水中</span></p>
             </div>
             <div class="text-right">
                 <span id="temp-display" class="text-3xl font-mono font-black text-blue-500 tracking-tighter">26.5°C</span>
@@ -163,6 +163,7 @@
             <button onclick="openManager('auto_water_change')" class="bg-white border border-gray-100 py-4 rounded-xl font-bold shadow-sm hover:shadow-md transition-all active:scale-95 text-gray-700">💧 換水排程管理</button>
             <button onclick="openManager('auto_light')" class="bg-white border border-gray-100 py-4 rounded-xl font-bold shadow-sm hover:shadow-md transition-all active:scale-95 text-gray-700 col-span-2">💡 燈光排程管理</button>
             <button id="main-btn-water-check" onclick="checkWaterLevel()" class="bg-white border border-gray-100 py-4 rounded-xl font-bold shadow-sm hover:shadow-md transition-all active:scale-95 text-gray-700 col-span-2"><span id="main-text-water-check">🌊 檢查水位</span></button>
+            <button id="main-btn-refill" onclick="triggerRefill()" class="bg-white border border-gray-100 py-4 rounded-xl font-bold shadow-sm hover:shadow-md transition-all active:scale-95 text-gray-700 col-span-2"><span id="main-text-refill">💧 手動補水</span></button>
             <button id="main-btn-light" onclick="toggleLight()" class="bg-gray-800 text-white py-4 rounded-xl font-black shadow-md flex items-center justify-center transition-all active:scale-95 cam-a-only">
                 <img id="main-icon-light" src="/static/resource/light_off.png" class="w-5 h-5 mr-2 object-contain">
                 <span id="main-text-light">開啟燈光</span>
@@ -212,6 +213,15 @@
                         <select id="new-light-action" class="bg-transparent text-sm font-bold outline-none text-gray-700 flex-1">
                             <option value="on">💡 開燈</option>
                             <option value="off">🌙 關燈</option>
+                        </select>
+                    </div>
+                </div>
+                <div id="water-action-row" class="items-center space-x-2 mb-2" style="display:none">
+                    <div class="flex-1 flex items-center bg-gray-50 border border-gray-200 rounded-xl px-3 py-2">
+                        <span class="text-sm font-bold text-gray-500 mr-2">動作</span>
+                        <select id="new-water-action" class="bg-transparent text-sm font-bold outline-none text-gray-700 flex-1">
+                            <option value="refill">💧 加水（水位過低時補水）</option>
+                            <option value="change">🔄 換水（待實作）</option>
                         </select>
                     </div>
                 </div>
@@ -497,6 +507,19 @@
             document.getElementById('main-text-light').innerText = isLightOn ? '關閉燈光' : '開啟燈光';
             const btn = document.getElementById('main-btn-light');
             if(isLightOn) btn.classList.replace('bg-gray-800', 'bg-yellow-500'); else btn.classList.replace('bg-yellow-500', 'bg-gray-800');
+            // 排程補水時自動輪詢（is_refilling=true → 每 2s 更新一次直到完成）
+            if (status.is_refilling && !_refillingPollTimer) {
+                _refillingPollTimer = setInterval(async () => {
+                    await loadConfig();
+                    if (!config.device_status.is_refilling) {
+                        clearInterval(_refillingPollTimer);
+                        _refillingPollTimer = null;
+                    }
+                }, 2000);
+            } else if (!status.is_refilling && _refillingPollTimer) {
+                clearInterval(_refillingPollTimer);
+                _refillingPollTimer = null;
+            }
         }
 
         function updateWaterLevelUI(status) {
@@ -528,6 +551,14 @@
                     sensorEl.classList.add('text-gray-400');
                     sensorEl.innerText = '--';
                 }
+                if (status.last_refill && status.last_refill !== 'Never') {
+                    sensorEl.title = `上次補水：${status.last_refill}（${status.last_refill_duration_s}s）`;
+                }
+            }
+            // 加水中指示
+            const refillingEl = document.getElementById('water-refilling');
+            if (refillingEl) {
+                refillingEl.classList.toggle('hidden', !status.is_refilling);
             }
         }
 
@@ -592,6 +623,44 @@
             const current = config.device_status.light === "on" ? 'light_off' : 'light_on';
             await fetch('/api/action', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: current}) });
             await loadConfig();
+        }
+
+        // --- 手動補水 ---
+        let isRefillBusy = false;
+        let _refillingPollTimer = null;
+
+        async function triggerRefill() {
+            if (isRefillBusy) return;
+            isRefillBusy = true;
+            const btn = document.getElementById('main-btn-refill');
+            const span = document.getElementById('main-text-refill');
+            btn.disabled = true;
+            span.textContent = '⏳ 補水中...';
+            try {
+                const res = await fetch('/api/action', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({action: 'refill'})
+                });
+                const data = await res.json();
+                const r = data.result || {};
+                const msg = {
+                    skipped: '✅ 水位正常',
+                    done:    `✅ 補水完成 (${r.duration_s}s)`,
+                    aborted: '⚠️ 超時中止',
+                    busy:    '⏳ 已在補水中'
+                }[r.status] || '❌ 未知結果';
+                span.textContent = msg;
+                await loadConfig();
+            } catch(e) {
+                span.textContent = '❌ 連線錯誤';
+            } finally {
+                setTimeout(() => {
+                    isRefillBusy = false;
+                    btn.disabled = false;
+                    span.textContent = '💧 手動補水';
+                }, 2500);
+            }
         }
 
         // --- 水位偵測調校 modal ---
@@ -801,6 +870,7 @@
                             <span class="text-2xl font-mono font-black text-gray-800">${displayH}:${m}</span>
                             ${item.enabled ? '<span class="bg-green-100 text-green-700 text-[10px] px-2 py-0.5 rounded-full font-bold">ON</span>' : '<span class="bg-gray-200 text-gray-500 text-[10px] px-2 py-0.5 rounded-full font-bold">OFF</span>'}
                             ${activeType === 'auto_light' ? (item.action === 'on' ? '<span class="bg-yellow-100 text-yellow-700 text-[10px] px-2 py-0.5 rounded-full font-bold">開燈</span>' : '<span class="bg-gray-100 text-gray-500 text-[10px] px-2 py-0.5 rounded-full font-bold">關燈</span>') : ''}
+                            ${activeType === 'auto_water_change' ? (item.action === 'refill' ? '<span class="bg-blue-100 text-blue-700 text-[10px] px-2 py-0.5 rounded-full font-bold">💧 加水</span>' : '<span class="bg-cyan-100 text-cyan-700 text-[10px] px-2 py-0.5 rounded-full font-bold">🔄 換水</span>') : ''}
                         </div>
                         <span class="text-xs font-semibold text-gray-400 mt-1">${item.days.length === 7 ? '每天' : '每週 ' + dayStr}</span>
                     </div>
@@ -826,6 +896,7 @@
             const time24 = `${h.toString().padStart(2, '0')}:${m}`;
             const newItem = { id: Date.now(), time: time24, days: selectedDays, enabled: true };
             if(activeType === 'auto_light') newItem.action = document.getElementById('new-light-action').value;
+            if(activeType === 'auto_water_change') newItem.action = document.getElementById('new-water-action').value;
             config[activeType].push(newItem);
             await saveConfig(); renderList();
         }
@@ -833,10 +904,12 @@
         async function saveConfig() { await fetch('/api/config', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(config) }); }
         function openManager(type) {
             activeType = type;
-            const titles = { auto_feed: '📅 餵食排程管理', auto_water_change: '💧 換水排程管理', auto_light: '💡 燈光排程管理' };
+            const titles = { auto_feed: '📅 餵食排程管理', auto_water_change: '💧 補換水排程管理', auto_light: '💡 燈光排程管理' };
             document.getElementById('modal-title').innerText = titles[type] || '排程管理';
             const lightAction = document.getElementById('light-action-row');
             if(lightAction) lightAction.style.display = type === 'auto_light' ? 'flex' : 'none';
+            const waterAction = document.getElementById('water-action-row');
+            if(waterAction) waterAction.style.display = type === 'auto_water_change' ? 'flex' : 'none';
             renderList();
             document.getElementById('manager-modal').classList.remove('hidden');
         }

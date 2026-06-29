@@ -16,6 +16,7 @@ from hardware.camera_ctrl import FishCamera, CsiCamera, enumerate_cameras, _PICA
 from hardware.light_ctrl import LightRelay
 from hardware.water_level import WaterLevelDetector
 from hardware.water_sensor import WaterLevelSensor
+from hardware.pump_ctrl import PumpRelay
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'fish-tank-secret-key-99b3awiet456qr4ojy@@##%&*%KGrkyorlwerk84*/*+59+r5*8giJ*J($)#' 
@@ -39,6 +40,12 @@ atexit.register(light_relay.cleanup)
 
 water_sensor = WaterLevelSensor()
 atexit.register(water_sensor.cleanup)
+
+pump_relay = PumpRelay()
+atexit.register(pump_relay.cleanup)
+
+_refill_lock = threading.Lock()
+MAX_REFILL_SECONDS = 120
 
 # 水位偵測器：參數於 config 載入後再套用（見下方 _init_water_detector）
 water_detector = None
@@ -123,7 +130,7 @@ def _write_water_status(result):
     if sensor_triggered or cv_state == 'low':
         sensor_str = "感測器：過低" if sensor_triggered else "感測器：正常"
         cv_str = f"視覺：{cv_state} {result.get('percent')}% gap={result.get('gap_px')}px"
-        print(f"[{now_str}] ⚠️ 水位警示 {sensor_str}／{cv_str}（補水馬達尚未實裝）")
+        print(f"[{now_str}] ⚠️ 水位警示 {sensor_str}／{cv_str}")
 
 def perform_water_level_check():
     """即時擷取多幀偵測（OpenCV）+ 讀取液位感測器，寫回 device_status，回傳結果 dict。
@@ -140,6 +147,88 @@ def perform_water_level_check():
 
     _write_water_status(cv_result)
     return cv_result
+
+def perform_refill(source='manual'):
+    """補水流程：sensor 確認過低 → 開馬達 → 監測至正常或超時 → 關馬達 → 更新 config。
+    防並發：同時只允許一個補水 thread 執行。
+    回傳 dict: {status: 'skipped'|'done'|'aborted'|'busy', ...}
+    """
+    if not _refill_lock.acquire(blocking=False):
+        print(f"[Refill] 已在補水中，忽略來自 {source} 的觸發")
+        return {'status': 'busy'}
+
+    try:
+        if not water_sensor.is_low():
+            sensor_state = water_sensor.state()
+            def _update_sensor(cfg):
+                ds = dict(cfg['device_status'])
+                ds['water_sensor_triggered'] = sensor_state['sensor_triggered']
+                ds['last_refill_source'] = source
+                return {**cfg, 'device_status': ds}
+            safe_update_config(_update_sensor)
+            print(f"[Refill] 水位正常，無需補水 (source={source})")
+            return {'status': 'skipped', 'reason': 'water_ok'}
+
+        start_time = time.time()
+        aborted = False
+        print(f"[Refill] 水位過低，開始補水 (source={source})")
+
+        def _set_on(cfg):
+            ds = dict(cfg['device_status'])
+            ds['is_refilling'] = True
+            ds['water_sensor_triggered'] = True
+            ds['last_refill_source'] = source
+            return {**cfg, 'device_status': ds}
+        safe_update_config(_set_on)
+
+        pump_relay.turn_on()
+
+        while True:
+            elapsed = time.time() - start_time
+            if elapsed >= MAX_REFILL_SECONDS:
+                aborted = True
+                print(f"[Refill] ⚠️ 超時 {MAX_REFILL_SECONDS}s，強制關閉馬達（可能漏水或感測器故障）")
+                break
+            if not water_sensor.is_low():
+                print(f"[Refill] 感測器回報正常，停止補水 (elapsed={elapsed:.1f}s)")
+                break
+            time.sleep(0.2)
+
+        pump_relay.turn_off()
+        duration = time.time() - start_time
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+        final_low = water_sensor.is_low()
+
+        def _set_done(cfg):
+            ds = dict(cfg['device_status'])
+            ds['is_refilling'] = False
+            ds['last_refill'] = now_str
+            ds['last_refill_duration_s'] = round(duration, 1)
+            ds['last_refill_source'] = source
+            ds['last_refill_aborted'] = aborted
+            ds['water_sensor_triggered'] = final_low
+            ds['water_level_alert'] = final_low
+            return {**cfg, 'device_status': ds}
+        safe_update_config(_set_done)
+
+        status = 'aborted' if aborted else 'done'
+        print(f"[Refill] 完成 status={status}, duration={duration:.1f}s")
+        return {'status': status, 'duration_s': round(duration, 1),
+                'aborted': aborted, 'sensor_triggered': final_low}
+
+    except Exception as e:
+        print(f"[Refill] 異常：{e}，強制關閉馬達")
+        pump_relay.turn_off()
+        def _set_err(cfg):
+            ds = dict(cfg['device_status'])
+            ds['is_refilling'] = False
+            ds['last_refill_aborted'] = True
+            return {**cfg, 'device_status': ds}
+        safe_update_config(_set_err)
+        raise
+
+    finally:
+        _refill_lock.release()
 
 def _capture_water_frames(n):
     frames = []
@@ -253,7 +342,13 @@ def check_schedule(source='cron'):
         for item in water_schedules:
             if item.get('enabled') and item.get('time') == now_time:
                 if now_day in item.get('days', []):
-                    print(f"[{now_time}] 觸發自動換水排程 (待實作)")
+                    action = item.get('action', 'refill')
+                    if action == 'refill':
+                        print(f"[{now_time}] 觸發自動補水排程")
+                        threading.Thread(target=perform_refill, args=('cron',), daemon=True).start()
+                    else:
+                        print(f"[{now_time}] 觸發自動換水排程（待實作）")
+                    break
 
         light_schedules = config.get('auto_light', [])
         for item in light_schedules:
@@ -447,6 +542,11 @@ def _ensure_water_config():
         ds.setdefault('water_level_percent', None)
         ds.setdefault('water_sensor_triggered', False)
         ds.setdefault('last_water_level_check', 'Never')
+        ds.setdefault('is_refilling', False)
+        ds.setdefault('last_refill', 'Never')
+        ds.setdefault('last_refill_duration_s', None)
+        ds.setdefault('last_refill_source', None)
+        ds.setdefault('last_refill_aborted', False)
         return {**cfg, "water_level_config": wlc, "device_status": ds}
     safe_update_config(_update)
 
@@ -640,6 +740,9 @@ def trigger_action():
         return jsonify({"status": "success"})
     elif action == 'check_water_level':
         result = perform_water_level_check()
+        return jsonify({"status": "success", "result": result})
+    elif action == 'refill':
+        result = perform_refill(source='manual')
         return jsonify({"status": "success", "result": result})
     return jsonify({"status": "received"})
 
