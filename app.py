@@ -49,7 +49,7 @@ atexit.register(drain_relay.cleanup)
 
 _refill_lock = threading.Lock()
 _stop_water_event = threading.Event()
-MAX_REFILL_SECONDS = 120
+MAX_REFILL_SECONDS = 360
 DRAIN_SECONDS = 160
 
 # 水位偵測器：參數於 config 載入後再套用（見下方 _init_water_detector）
