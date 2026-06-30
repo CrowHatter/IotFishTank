@@ -291,7 +291,16 @@ def perform_water_change(source='manual'):
             print(f"[WaterChange] 緊急停止，不進行補水")
             return {'status': 'stopped', 'drain_s': 0, 'refill_result': None}
 
-        print(f"[WaterChange] 抽水完成，開始補水")
+        # 等待虹吸停止：抽水結束後靜待 15 秒再補水
+        print(f"[WaterChange] 抽水完成，等待 15s 讓虹吸停止")
+        siphon_deadline = time.time() + 15
+        while time.time() < siphon_deadline:
+            if _stop_water_event.is_set():
+                print(f"[WaterChange] ⛔ 虹吸等待中收到緊急停止指令")
+                return {'status': 'stopped', 'drain_s': DRAIN_SECONDS, 'refill_result': None}
+            time.sleep(0.2)
+
+        print(f"[WaterChange] 開始補水")
         refill_result = _do_refill(source)
         print(f"[WaterChange] 換水完成 refill_result={refill_result}")
         final_status = 'stopped' if refill_result.get('status') == 'stopped' else 'done'
