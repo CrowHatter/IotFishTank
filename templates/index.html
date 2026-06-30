@@ -563,9 +563,8 @@
             // 換水中指示
             const drainingEl = document.getElementById('water-draining');
             if (drainingEl) drainingEl.classList.toggle('hidden', !status.is_draining);
-            // 換水/加水中都要鎖住加水按鈕
-            const refillBtn = document.getElementById('main-btn-refill');
-            if (refillBtn) refillBtn.disabled = !!(status.is_draining || status.is_refilling);
+            // 排程觸發時（前端未持有 busy 旗標）：讓按鈕就地變成緊急停止
+            _syncWaterBtnsToStatus(status);
         }
 
         // --- 下拉選單 ---
@@ -636,13 +635,57 @@
         let isDrainBusy = false;
         let _refillingPollTimer = null;
 
+        function _syncWaterBtnsToStatus(status) {
+            const refillBtn = document.getElementById('main-btn-refill');
+            const refillSpan = document.getElementById('main-text-refill');
+            const drainBtn = document.getElementById('main-btn-drain');
+            const drainSpan = document.getElementById('main-text-drain');
+            if (!refillBtn || !drainBtn) return;
+
+            // 加水中（排程觸發，前端未持有 busy）
+            if (status.is_refilling && !isRefillBusy) {
+                refillBtn.classList.add('!bg-red-100', '!border-red-300', '!text-red-700');
+                refillSpan.textContent = '⛔ 緊急停止';
+                drainBtn.disabled = true;
+            } else if (!status.is_refilling && !isRefillBusy) {
+                refillBtn.classList.remove('!bg-red-100', '!border-red-300', '!text-red-700');
+                if (refillSpan.textContent === '⛔ 緊急停止') refillSpan.textContent = '💧 手動加水';
+                drainBtn.disabled = false;
+            }
+
+            // 換水中（排程觸發，前端未持有 busy）
+            if ((status.is_draining || status.is_refilling) && !isDrainBusy) {
+                drainBtn.classList.add('!bg-red-100', '!border-red-300', '!text-red-700');
+                drainSpan.textContent = '⛔ 緊急停止';
+                refillBtn.disabled = true;
+            } else if (!status.is_draining && !status.is_refilling && !isDrainBusy) {
+                drainBtn.classList.remove('!bg-red-100', '!border-red-300', '!text-red-700');
+                if (drainSpan.textContent === '⛔ 緊急停止') drainSpan.textContent = '🔄 手動換水';
+                refillBtn.disabled = false;
+            }
+        }
+
+        async function _sendStopWater() {
+            await fetch('/api/action', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({action: 'stop_water'})
+            });
+        }
+
         async function triggerRefill() {
-            if (isRefillBusy || isDrainBusy) return;
+            // 加水進行中（含排程觸發）→ 變成緊急停止
+            const inProgress = config.device_status && (config.device_status.is_refilling || config.device_status.is_draining);
+            if (isRefillBusy || inProgress) {
+                await _sendStopWater();
+                return;
+            }
+            if (isDrainBusy) return;
             isRefillBusy = true;
             const btn = document.getElementById('main-btn-refill');
             const span = document.getElementById('main-text-refill');
-            btn.disabled = true;
-            span.textContent = '⏳ 加水中...';
+            btn.classList.add('!bg-red-100', '!border-red-300', '!text-red-700');
+            span.textContent = '⛔ 緊急停止';
             try {
                 const res = await fetch('/api/action', {
                     method: 'POST',
@@ -655,6 +698,7 @@
                     skipped: '✅ 水位正常',
                     done:    `✅ 加水完成 (${r.duration_s}s)`,
                     aborted: '⚠️ 超時中止',
+                    stopped: '⛔ 已停止',
                     busy:    '⏳ 已在進行中'
                 }[r.status] || '❌ 未知結果';
                 span.textContent = msg;
@@ -664,19 +708,25 @@
             } finally {
                 setTimeout(() => {
                     isRefillBusy = false;
-                    btn.disabled = false;
+                    btn.classList.remove('!bg-red-100', '!border-red-300', '!text-red-700');
                     span.textContent = '💧 手動加水';
                 }, 2500);
             }
         }
 
         async function triggerWaterChange() {
-            if (isDrainBusy || isRefillBusy) return;
+            // 換水/抽水進行中（含排程觸發）→ 變成緊急停止
+            const inProgress = config.device_status && (config.device_status.is_draining || config.device_status.is_refilling);
+            if (isDrainBusy || inProgress) {
+                await _sendStopWater();
+                return;
+            }
+            if (isRefillBusy) return;
             isDrainBusy = true;
             const btn = document.getElementById('main-btn-drain');
             const span = document.getElementById('main-text-drain');
-            btn.disabled = true;
-            span.textContent = '⏳ 換水中...';
+            btn.classList.add('!bg-red-100', '!border-red-300', '!text-red-700');
+            span.textContent = '⛔ 緊急停止';
             try {
                 const res = await fetch('/api/action', {
                     method: 'POST',
@@ -687,7 +737,6 @@
                 if (data.status === 'busy') {
                     span.textContent = '⏳ 已在進行中';
                 } else {
-                    span.textContent = '🔄 抽水中...';
                     await loadConfig();
                     await new Promise(resolve => {
                         const t = setInterval(async () => {
@@ -705,7 +754,7 @@
             } finally {
                 setTimeout(() => {
                     isDrainBusy = false;
-                    btn.disabled = false;
+                    btn.classList.remove('!bg-red-100', '!border-red-300', '!text-red-700');
                     span.textContent = '🔄 手動換水';
                 }, 2500);
             }

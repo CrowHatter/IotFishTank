@@ -48,6 +48,7 @@ drain_relay = DrainRelay()
 atexit.register(drain_relay.cleanup)
 
 _refill_lock = threading.Lock()
+_stop_water_event = threading.Event()
 MAX_REFILL_SECONDS = 120
 DRAIN_SECONDS = 160
 
@@ -167,6 +168,7 @@ def _do_refill(source):
 
     start_time = time.time()
     aborted = False
+    stopped = False
     print(f"[Refill] 水位過低，開始補水 (source={source})")
 
     def _set_on(cfg):
@@ -181,6 +183,10 @@ def _do_refill(source):
 
     try:
         while True:
+            if _stop_water_event.is_set():
+                stopped = True
+                print(f"[Refill] ⛔ 收到緊急停止指令")
+                break
             elapsed = time.time() - start_time
             if elapsed >= MAX_REFILL_SECONDS:
                 aborted = True
@@ -203,26 +209,32 @@ def _do_refill(source):
         ds['last_refill'] = now_str
         ds['last_refill_duration_s'] = round(duration, 1)
         ds['last_refill_source'] = source
-        ds['last_refill_aborted'] = aborted
+        ds['last_refill_aborted'] = aborted or stopped
         ds['water_sensor_triggered'] = final_low
         ds['water_level_alert'] = final_low
         return {**cfg, 'device_status': ds}
     safe_update_config(_set_done)
 
-    status = 'aborted' if aborted else 'done'
+    if stopped:
+        status = 'stopped'
+    elif aborted:
+        status = 'aborted'
+    else:
+        status = 'done'
     print(f"[Refill] 完成 status={status}, duration={duration:.1f}s")
     return {'status': status, 'duration_s': round(duration, 1),
-            'aborted': aborted, 'sensor_triggered': final_low}
+            'aborted': aborted or stopped, 'sensor_triggered': final_low}
 
 
 def perform_refill(source='manual'):
     """補水流程：sensor 確認過低 → 開馬達 → 監測至正常或超時 → 關馬達 → 更新 config。
     防並發：同時只允許一個補水/換水 thread 執行。
-    回傳 dict: {status: 'skipped'|'done'|'aborted'|'busy', ...}
+    回傳 dict: {status: 'skipped'|'done'|'aborted'|'stopped'|'busy', ...}
     """
     if not _refill_lock.acquire(blocking=False):
         print(f"[Refill] 已在補水/換水中，忽略來自 {source} 的觸發")
         return {'status': 'busy'}
+    _stop_water_event.clear()
     try:
         return _do_refill(source)
     except Exception as e:
@@ -239,13 +251,14 @@ def perform_refill(source='manual'):
 
 
 def perform_water_change(source='manual'):
-    """換水流程：抽水 DRAIN_SECONDS 秒 → 補水至感測器正常。
+    """換水流程：抽水 DRAIN_SECONDS 秒（可中斷）→ 補水至感測器正常。
     與 perform_refill 共用 _refill_lock，互相鎖住。
-    回傳 dict: {status: 'done'|'busy', drain_s, refill_result}
+    回傳 dict: {status: 'done'|'stopped'|'busy', drain_s, refill_result}
     """
     if not _refill_lock.acquire(blocking=False):
         print(f"[WaterChange] 已在補水/換水中，忽略來自 {source} 的觸發")
         return {'status': 'busy'}
+    _stop_water_event.clear()
     try:
         print(f"[WaterChange] 開始換水，抽水 {DRAIN_SECONDS}s (source={source})")
         def _set_drain(cfg):
@@ -255,8 +268,16 @@ def perform_water_change(source='manual'):
         safe_update_config(_set_drain)
 
         drain_relay.turn_on()
+        drain_stopped = False
         try:
-            time.sleep(DRAIN_SECONDS)
+            # 每 0.2s 檢查一次停止信號，取代單一 sleep(DRAIN_SECONDS)
+            deadline = time.time() + DRAIN_SECONDS
+            while time.time() < deadline:
+                if _stop_water_event.is_set():
+                    drain_stopped = True
+                    print(f"[WaterChange] ⛔ 收到緊急停止指令，中止抽水")
+                    break
+                time.sleep(0.2)
         finally:
             drain_relay.turn_off()
 
@@ -265,11 +286,16 @@ def perform_water_change(source='manual'):
             ds['is_draining'] = False
             return {**cfg, 'device_status': ds}
         safe_update_config(_clear_drain)
-        print(f"[WaterChange] 抽水完成，開始補水")
 
+        if drain_stopped:
+            print(f"[WaterChange] 緊急停止，不進行補水")
+            return {'status': 'stopped', 'drain_s': 0, 'refill_result': None}
+
+        print(f"[WaterChange] 抽水完成，開始補水")
         refill_result = _do_refill(source)
         print(f"[WaterChange] 換水完成 refill_result={refill_result}")
-        return {'status': 'done', 'drain_s': DRAIN_SECONDS, 'refill_result': refill_result}
+        final_status = 'stopped' if refill_result.get('status') == 'stopped' else 'done'
+        return {'status': final_status, 'drain_s': DRAIN_SECONDS, 'refill_result': refill_result}
 
     except Exception as e:
         print(f"[WaterChange] 異常：{e}，強制關閉所有繼電器")
@@ -806,6 +832,12 @@ def trigger_action():
             return jsonify({"status": "busy"})
         threading.Thread(target=perform_water_change, args=('manual',), daemon=True).start()
         return jsonify({"status": "accepted"})
+    elif action == 'stop_water':
+        _stop_water_event.set()
+        drain_relay.turn_off()
+        pump_relay.turn_off()
+        print(f"[StopWater] 緊急停止指令送出")
+        return jsonify({"status": "stopping"})
     return jsonify({"status": "received"})
 
 @app.route('/api/water_level/tune', methods=['POST'])
