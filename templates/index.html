@@ -151,7 +151,7 @@
                 <p class="text-gray-400 text-xs mb-1 uppercase tracking-widest font-bold">Status 狀態</p>
                 <p class="text-gray-600 text-sm">餵食 A：<span id="last-fed-A" class="text-blue-600 font-bold">載入中...</span></p>
                 <p class="text-gray-600 text-sm">餵食 B：<span id="last-fed-B" class="text-blue-600 font-bold">載入中...</span></p>
-                <p class="text-gray-600 text-sm">水位檢測：<span id="water-level" class="font-bold text-gray-400">載入中...</span>・<span id="water-sensor" class="font-bold text-gray-400">--</span><span id="water-refilling" class="hidden font-bold text-blue-500 ml-1 animate-pulse">💧 加水中</span></p>
+                <p class="text-gray-600 text-sm">水位檢測：<span id="water-level" class="font-bold text-gray-400">載入中...</span>・<span id="water-sensor" class="font-bold text-gray-400">--</span><span id="water-refilling" class="hidden font-bold text-blue-500 ml-1 animate-pulse">💧 加水中</span><span id="water-draining" class="hidden font-bold text-cyan-500 ml-1 animate-pulse">🔄 換水中</span></p>
             </div>
             <div class="text-right">
                 <span id="temp-display" class="text-3xl font-mono font-black text-blue-500 tracking-tighter">26.5°C</span>
@@ -163,7 +163,8 @@
             <button onclick="openManager('auto_water_change')" class="bg-white border border-gray-100 py-4 rounded-xl font-bold shadow-sm hover:shadow-md transition-all active:scale-95 text-gray-700">💧 換水排程管理</button>
             <button onclick="openManager('auto_light')" class="bg-white border border-gray-100 py-4 rounded-xl font-bold shadow-sm hover:shadow-md transition-all active:scale-95 text-gray-700 col-span-2">💡 燈光排程管理</button>
             <button id="main-btn-water-check" onclick="checkWaterLevel()" class="bg-white border border-gray-100 py-4 rounded-xl font-bold shadow-sm hover:shadow-md transition-all active:scale-95 text-gray-700 col-span-2"><span id="main-text-water-check">🌊 檢查水位</span></button>
-            <button id="main-btn-refill" onclick="triggerRefill()" class="bg-white border border-gray-100 py-4 rounded-xl font-bold shadow-sm hover:shadow-md transition-all active:scale-95 text-gray-700 col-span-2"><span id="main-text-refill">💧 手動補水</span></button>
+            <button id="main-btn-refill" onclick="triggerRefill()" class="bg-white border border-gray-100 py-4 rounded-xl font-bold shadow-sm hover:shadow-md transition-all active:scale-95 text-gray-700"><span id="main-text-refill">💧 手動加水</span></button>
+            <button id="main-btn-drain" onclick="triggerWaterChange()" class="bg-white border border-gray-100 py-4 rounded-xl font-bold shadow-sm hover:shadow-md transition-all active:scale-95 text-gray-700"><span id="main-text-drain">🔄 手動換水</span></button>
             <button id="main-btn-light" onclick="toggleLight()" class="bg-gray-800 text-white py-4 rounded-xl font-black shadow-md flex items-center justify-center transition-all active:scale-95 cam-a-only">
                 <img id="main-icon-light" src="/static/resource/light_off.png" class="w-5 h-5 mr-2 object-contain">
                 <span id="main-text-light">開啟燈光</span>
@@ -221,7 +222,7 @@
                         <span class="text-sm font-bold text-gray-500 mr-2">動作</span>
                         <select id="new-water-action" class="bg-transparent text-sm font-bold outline-none text-gray-700 flex-1">
                             <option value="refill">💧 加水（水位過低時補水）</option>
-                            <option value="change">🔄 換水（待實作）</option>
+                            <option value="change">🔄 換水（抽水 160s→補水至正常）</option>
                         </select>
                     </div>
                 </div>
@@ -507,16 +508,17 @@
             document.getElementById('main-text-light').innerText = isLightOn ? '關閉燈光' : '開啟燈光';
             const btn = document.getElementById('main-btn-light');
             if(isLightOn) btn.classList.replace('bg-gray-800', 'bg-yellow-500'); else btn.classList.replace('bg-yellow-500', 'bg-gray-800');
-            // 排程補水時自動輪詢（is_refilling=true → 每 2s 更新一次直到完成）
-            if (status.is_refilling && !_refillingPollTimer) {
+            // 排程補水/換水時自動輪詢（is_refilling 或 is_draining 為 true → 每 2s 更新直到兩者皆 false）
+            const isWaterActivity = status.is_refilling || status.is_draining;
+            if (isWaterActivity && !_refillingPollTimer) {
                 _refillingPollTimer = setInterval(async () => {
                     await loadConfig();
-                    if (!config.device_status.is_refilling) {
+                    if (!config.device_status.is_refilling && !config.device_status.is_draining) {
                         clearInterval(_refillingPollTimer);
                         _refillingPollTimer = null;
                     }
                 }, 2000);
-            } else if (!status.is_refilling && _refillingPollTimer) {
+            } else if (!isWaterActivity && _refillingPollTimer) {
                 clearInterval(_refillingPollTimer);
                 _refillingPollTimer = null;
             }
@@ -557,9 +559,13 @@
             }
             // 加水中指示
             const refillingEl = document.getElementById('water-refilling');
-            if (refillingEl) {
-                refillingEl.classList.toggle('hidden', !status.is_refilling);
-            }
+            if (refillingEl) refillingEl.classList.toggle('hidden', !status.is_refilling);
+            // 換水中指示
+            const drainingEl = document.getElementById('water-draining');
+            if (drainingEl) drainingEl.classList.toggle('hidden', !status.is_draining);
+            // 換水/加水中都要鎖住加水按鈕
+            const refillBtn = document.getElementById('main-btn-refill');
+            if (refillBtn) refillBtn.disabled = !!(status.is_draining || status.is_refilling);
         }
 
         // --- 下拉選單 ---
@@ -625,17 +631,18 @@
             await loadConfig();
         }
 
-        // --- 手動補水 ---
+        // --- 手動加水 / 手動換水 ---
         let isRefillBusy = false;
+        let isDrainBusy = false;
         let _refillingPollTimer = null;
 
         async function triggerRefill() {
-            if (isRefillBusy) return;
+            if (isRefillBusy || isDrainBusy) return;
             isRefillBusy = true;
             const btn = document.getElementById('main-btn-refill');
             const span = document.getElementById('main-text-refill');
             btn.disabled = true;
-            span.textContent = '⏳ 補水中...';
+            span.textContent = '⏳ 加水中...';
             try {
                 const res = await fetch('/api/action', {
                     method: 'POST',
@@ -646,9 +653,9 @@
                 const r = data.result || {};
                 const msg = {
                     skipped: '✅ 水位正常',
-                    done:    `✅ 補水完成 (${r.duration_s}s)`,
+                    done:    `✅ 加水完成 (${r.duration_s}s)`,
                     aborted: '⚠️ 超時中止',
-                    busy:    '⏳ 已在補水中'
+                    busy:    '⏳ 已在進行中'
                 }[r.status] || '❌ 未知結果';
                 span.textContent = msg;
                 await loadConfig();
@@ -658,7 +665,48 @@
                 setTimeout(() => {
                     isRefillBusy = false;
                     btn.disabled = false;
-                    span.textContent = '💧 手動補水';
+                    span.textContent = '💧 手動加水';
+                }, 2500);
+            }
+        }
+
+        async function triggerWaterChange() {
+            if (isDrainBusy || isRefillBusy) return;
+            isDrainBusy = true;
+            const btn = document.getElementById('main-btn-drain');
+            const span = document.getElementById('main-text-drain');
+            btn.disabled = true;
+            span.textContent = '⏳ 換水中...';
+            try {
+                const res = await fetch('/api/action', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({action: 'water_change'})
+                });
+                const data = await res.json();
+                if (data.status === 'busy') {
+                    span.textContent = '⏳ 已在進行中';
+                } else {
+                    span.textContent = '🔄 抽水中...';
+                    await loadConfig();
+                    await new Promise(resolve => {
+                        const t = setInterval(async () => {
+                            await loadConfig();
+                            if (!config.device_status.is_draining && !config.device_status.is_refilling) {
+                                clearInterval(t);
+                                resolve();
+                            }
+                        }, 2000);
+                    });
+                    span.textContent = '✅ 換水完成';
+                }
+            } catch(e) {
+                span.textContent = '❌ 連線錯誤';
+            } finally {
+                setTimeout(() => {
+                    isDrainBusy = false;
+                    btn.disabled = false;
+                    span.textContent = '🔄 手動換水';
                 }, 2500);
             }
         }

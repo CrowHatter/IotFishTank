@@ -16,7 +16,7 @@ from hardware.camera_ctrl import FishCamera, CsiCamera, enumerate_cameras, _PICA
 from hardware.light_ctrl import LightRelay
 from hardware.water_level import WaterLevelDetector
 from hardware.water_sensor import WaterLevelSensor
-from hardware.pump_ctrl import PumpRelay
+from hardware.pump_ctrl import PumpRelay, DrainRelay
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'fish-tank-secret-key-99b3awiet456qr4ojy@@##%&*%KGrkyorlwerk84*/*+59+r5*8giJ*J($)#' 
@@ -44,8 +44,12 @@ atexit.register(water_sensor.cleanup)
 pump_relay = PumpRelay()
 atexit.register(pump_relay.cleanup)
 
+drain_relay = DrainRelay()
+atexit.register(drain_relay.cleanup)
+
 _refill_lock = threading.Lock()
 MAX_REFILL_SECONDS = 120
+DRAIN_SECONDS = 160
 
 # 水位偵測器：參數於 config 載入後再套用（見下方 _init_water_detector）
 water_detector = None
@@ -148,41 +152,34 @@ def perform_water_level_check():
     _write_water_status(cv_result)
     return cv_result
 
-def perform_refill(source='manual'):
-    """補水流程：sensor 確認過低 → 開馬達 → 監測至正常或超時 → 關馬達 → 更新 config。
-    防並發：同時只允許一個補水 thread 執行。
-    回傳 dict: {status: 'skipped'|'done'|'aborted'|'busy', ...}
-    """
-    if not _refill_lock.acquire(blocking=False):
-        print(f"[Refill] 已在補水中，忽略來自 {source} 的觸發")
-        return {'status': 'busy'}
-
-    try:
-        if not water_sensor.is_low():
-            sensor_state = water_sensor.state()
-            def _update_sensor(cfg):
-                ds = dict(cfg['device_status'])
-                ds['water_sensor_triggered'] = sensor_state['sensor_triggered']
-                ds['last_refill_source'] = source
-                return {**cfg, 'device_status': ds}
-            safe_update_config(_update_sensor)
-            print(f"[Refill] 水位正常，無需補水 (source={source})")
-            return {'status': 'skipped', 'reason': 'water_ok'}
-
-        start_time = time.time()
-        aborted = False
-        print(f"[Refill] 水位過低，開始補水 (source={source})")
-
-        def _set_on(cfg):
+def _do_refill(source):
+    """補水核心邏輯（不含 lock）。呼叫前需已持有 _refill_lock。"""
+    if not water_sensor.is_low():
+        sensor_state = water_sensor.state()
+        def _update_sensor(cfg):
             ds = dict(cfg['device_status'])
-            ds['is_refilling'] = True
-            ds['water_sensor_triggered'] = True
+            ds['water_sensor_triggered'] = sensor_state['sensor_triggered']
             ds['last_refill_source'] = source
             return {**cfg, 'device_status': ds}
-        safe_update_config(_set_on)
+        safe_update_config(_update_sensor)
+        print(f"[Refill] 水位正常，無需補水 (source={source})")
+        return {'status': 'skipped', 'reason': 'water_ok'}
 
-        pump_relay.turn_on()
+    start_time = time.time()
+    aborted = False
+    print(f"[Refill] 水位過低，開始補水 (source={source})")
 
+    def _set_on(cfg):
+        ds = dict(cfg['device_status'])
+        ds['is_refilling'] = True
+        ds['water_sensor_triggered'] = True
+        ds['last_refill_source'] = source
+        return {**cfg, 'device_status': ds}
+    safe_update_config(_set_on)
+
+    pump_relay.turn_on()
+
+    try:
         while True:
             elapsed = time.time() - start_time
             if elapsed >= MAX_REFILL_SECONDS:
@@ -193,32 +190,43 @@ def perform_refill(source='manual'):
                 print(f"[Refill] 感測器回報正常，停止補水 (elapsed={elapsed:.1f}s)")
                 break
             time.sleep(0.2)
-
+    finally:
         pump_relay.turn_off()
-        duration = time.time() - start_time
-        now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-        final_low = water_sensor.is_low()
 
-        def _set_done(cfg):
-            ds = dict(cfg['device_status'])
-            ds['is_refilling'] = False
-            ds['last_refill'] = now_str
-            ds['last_refill_duration_s'] = round(duration, 1)
-            ds['last_refill_source'] = source
-            ds['last_refill_aborted'] = aborted
-            ds['water_sensor_triggered'] = final_low
-            ds['water_level_alert'] = final_low
-            return {**cfg, 'device_status': ds}
-        safe_update_config(_set_done)
+    duration = time.time() - start_time
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+    final_low = water_sensor.is_low()
 
-        status = 'aborted' if aborted else 'done'
-        print(f"[Refill] 完成 status={status}, duration={duration:.1f}s")
-        return {'status': status, 'duration_s': round(duration, 1),
-                'aborted': aborted, 'sensor_triggered': final_low}
+    def _set_done(cfg):
+        ds = dict(cfg['device_status'])
+        ds['is_refilling'] = False
+        ds['last_refill'] = now_str
+        ds['last_refill_duration_s'] = round(duration, 1)
+        ds['last_refill_source'] = source
+        ds['last_refill_aborted'] = aborted
+        ds['water_sensor_triggered'] = final_low
+        ds['water_level_alert'] = final_low
+        return {**cfg, 'device_status': ds}
+    safe_update_config(_set_done)
 
+    status = 'aborted' if aborted else 'done'
+    print(f"[Refill] 完成 status={status}, duration={duration:.1f}s")
+    return {'status': status, 'duration_s': round(duration, 1),
+            'aborted': aborted, 'sensor_triggered': final_low}
+
+
+def perform_refill(source='manual'):
+    """補水流程：sensor 確認過低 → 開馬達 → 監測至正常或超時 → 關馬達 → 更新 config。
+    防並發：同時只允許一個補水/換水 thread 執行。
+    回傳 dict: {status: 'skipped'|'done'|'aborted'|'busy', ...}
+    """
+    if not _refill_lock.acquire(blocking=False):
+        print(f"[Refill] 已在補水/換水中，忽略來自 {source} 的觸發")
+        return {'status': 'busy'}
+    try:
+        return _do_refill(source)
     except Exception as e:
         print(f"[Refill] 異常：{e}，強制關閉馬達")
-        pump_relay.turn_off()
         def _set_err(cfg):
             ds = dict(cfg['device_status'])
             ds['is_refilling'] = False
@@ -226,7 +234,54 @@ def perform_refill(source='manual'):
             return {**cfg, 'device_status': ds}
         safe_update_config(_set_err)
         raise
+    finally:
+        _refill_lock.release()
 
+
+def perform_water_change(source='manual'):
+    """換水流程：抽水 DRAIN_SECONDS 秒 → 補水至感測器正常。
+    與 perform_refill 共用 _refill_lock，互相鎖住。
+    回傳 dict: {status: 'done'|'busy', drain_s, refill_result}
+    """
+    if not _refill_lock.acquire(blocking=False):
+        print(f"[WaterChange] 已在補水/換水中，忽略來自 {source} 的觸發")
+        return {'status': 'busy'}
+    try:
+        print(f"[WaterChange] 開始換水，抽水 {DRAIN_SECONDS}s (source={source})")
+        def _set_drain(cfg):
+            ds = dict(cfg['device_status'])
+            ds['is_draining'] = True
+            return {**cfg, 'device_status': ds}
+        safe_update_config(_set_drain)
+
+        drain_relay.turn_on()
+        try:
+            time.sleep(DRAIN_SECONDS)
+        finally:
+            drain_relay.turn_off()
+
+        def _clear_drain(cfg):
+            ds = dict(cfg['device_status'])
+            ds['is_draining'] = False
+            return {**cfg, 'device_status': ds}
+        safe_update_config(_clear_drain)
+        print(f"[WaterChange] 抽水完成，開始補水")
+
+        refill_result = _do_refill(source)
+        print(f"[WaterChange] 換水完成 refill_result={refill_result}")
+        return {'status': 'done', 'drain_s': DRAIN_SECONDS, 'refill_result': refill_result}
+
+    except Exception as e:
+        print(f"[WaterChange] 異常：{e}，強制關閉所有繼電器")
+        drain_relay.turn_off()
+        pump_relay.turn_off()
+        def _set_err(cfg):
+            ds = dict(cfg['device_status'])
+            ds['is_draining'] = False
+            ds['is_refilling'] = False
+            return {**cfg, 'device_status': ds}
+        safe_update_config(_set_err)
+        raise
     finally:
         _refill_lock.release()
 
@@ -347,7 +402,8 @@ def check_schedule(source='cron'):
                         print(f"[{now_time}] 觸發自動補水排程")
                         threading.Thread(target=perform_refill, args=('cron',), daemon=True).start()
                     else:
-                        print(f"[{now_time}] 觸發自動換水排程（待實作）")
+                        print(f"[{now_time}] 觸發自動換水排程")
+                        threading.Thread(target=perform_water_change, args=('cron',), daemon=True).start()
                     break
 
         light_schedules = config.get('auto_light', [])
@@ -542,6 +598,7 @@ def _ensure_water_config():
         ds.setdefault('water_level_percent', None)
         ds.setdefault('water_sensor_triggered', False)
         ds.setdefault('last_water_level_check', 'Never')
+        ds.setdefault('is_draining', False)
         ds.setdefault('is_refilling', False)
         ds.setdefault('last_refill', 'Never')
         ds.setdefault('last_refill_duration_s', None)
@@ -744,6 +801,11 @@ def trigger_action():
     elif action == 'refill':
         result = perform_refill(source='manual')
         return jsonify({"status": "success", "result": result})
+    elif action == 'water_change':
+        if _refill_lock.locked():
+            return jsonify({"status": "busy"})
+        threading.Thread(target=perform_water_change, args=('manual',), daemon=True).start()
+        return jsonify({"status": "accepted"})
     return jsonify({"status": "received"})
 
 @app.route('/api/water_level/tune', methods=['POST'])
