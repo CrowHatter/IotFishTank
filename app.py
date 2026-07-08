@@ -50,7 +50,7 @@ atexit.register(drain_relay.cleanup)
 _refill_lock = threading.Lock()
 _stop_water_event = threading.Event()
 MAX_REFILL_SECONDS = 360
-DRAIN_SECONDS = 160
+DRAIN_SECONDS = 200
 
 # 水位偵測器：參數於 config 載入後再套用（見下方 _init_water_detector）
 water_detector = None
@@ -291,9 +291,9 @@ def perform_water_change(source='manual'):
             print(f"[WaterChange] 緊急停止，不進行補水")
             return {'status': 'stopped', 'drain_s': 0, 'refill_result': None}
 
-        # 等待虹吸停止：抽水結束後靜待 15 秒再補水
-        print(f"[WaterChange] 抽水完成，等待 15s 讓虹吸停止")
-        siphon_deadline = time.time() + 15
+        # 等待虹吸停止：抽水結束後靜待 60 秒再補水
+        print(f"[WaterChange] 抽水完成，等待 60s 讓虹吸停止")
+        siphon_deadline = time.time() + 60
         while time.time() < siphon_deadline:
             if _stop_water_event.is_set():
                 print(f"[WaterChange] ⛔ 虹吸等待中收到緊急停止指令")
