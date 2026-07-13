@@ -186,7 +186,7 @@ journalctl -u fishtank.service -f
 
 ## 🛡️ 系統穩定性維護 (Watchdog System)
 
-針對 Pi Zero 2W 長時間運行下可能出現的 Wi-Fi 斷線，實作三層防禦機制。
+針對 Pi Zero 2W 長時間運行下可能出現的 Wi-Fi 斷線與服務卡死，實作雙層防禦機制：網路監控 + 服務健康監控，兩者觸發修復動作時都會推播 Discord 通知。
 
 ### 1. 網路監控腳本 (Network Watchdog)
 
@@ -195,7 +195,7 @@ journalctl -u fishtank.service -f
 sudo nano /usr/local/bin/net_watchdog.sh
 ```
 
-貼入以下內容：
+貼入以下內容（`DISCORD_WEBHOOK` 換成自己申請的 Discord Webhook URL）：
 ```bash
 #!/bin/bash
 
@@ -204,6 +204,14 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 TARGET="8.8.8.8"
 GATEWAY="192.168.1.1"
 LOG_FILE="/var/log/network_watchdog.log"
+DISCORD_WEBHOOK="<你的 Discord Webhook URL>"
+
+notify() {
+    /usr/bin/curl -s -H "Content-Type: application/json" \
+        -d "{\"content\": \"$1\"}" \
+        --max-time 10 \
+        "$DISCORD_WEBHOOK" >> $LOG_FILE 2>&1
+}
 
 echo "$(date): 監控啟動檢查" >> $LOG_FILE
 
@@ -223,6 +231,7 @@ if [ ! -z "$HW_ERROR" ]; then
     /usr/bin/ping -c 2 -W 3 $GATEWAY > /dev/null 2>&1
     if [ $? -ne 0 ]; then
         echo "$(date): [嚴重故障] 確認鎖死，執行強制重啟！" >> $LOG_FILE
+        notify "🚨 [魚缸網路警報] 偵測到 Wi-Fi 硬體鎖死（-110 錯誤 + 閘道不通），$(date '+%Y-%m-%d %H:%M:%S') 執行強制重開機"
         /usr/bin/dmesg -C
         /sbin/reboot
         exit 0
@@ -231,10 +240,13 @@ fi
 
 # 第三階段：軟修復（重新關聯 Wi-Fi）
 echo "$(date): [階段 1] 網路不通，執行 nmcli 重啟 wlan0..." >> $LOG_FILE
+notify "⚠️ [魚缸網路警報] 外網不通，$(date '+%Y-%m-%d %H:%M:%S') 執行 Wi-Fi 軟修復（重新連接 wlan0）"
 /usr/bin/nmcli device disconnect wlan0 > /dev/null 2>&1
 /usr/bin/sleep 5
 /usr/bin/nmcli device connect wlan0 > /dev/null 2>&1
 ```
+
+外網正常時不發通知（避免洗版），只有真正觸發修復動作才推播，並用不同 emoji 區分嚴重度：⚠️ 軟修復（重連 Wi-Fi）、🚨 強制重開機（硬體鎖死）。
 
 **步驟 2：修正權限與建立 log 檔**
 ```bash
@@ -250,7 +262,55 @@ sudo /usr/local/bin/net_watchdog.sh && echo "OK"
 cat /var/log/network_watchdog.log
 ```
 
-### 2. 定時任務配置 (Crontab)
+### 2. 服務健康監控腳本 (Service Watchdog)
+
+Gunicorn worker 有可能在開機階段（例如相機/GPIO 初始化）卡進死鎖：process 存活、port 持續 listening，但 systemd 會誤判為 `active (running)`，實際上任何 HTTP request 都不會有回應。`net_watchdog.sh` 檢查的是外網連通性，抓不到這種「本機服務卡死但網路正常」的狀況，因此另外補上一層針對 Flask 服務本身的健康檢查。
+
+**步驟 1：建立腳本檔案**
+```bash
+sudo nano /usr/local/bin/service_watchdog.sh
+```
+
+貼入以下內容（`DISCORD_WEBHOOK` 可與 `net_watchdog.sh` 共用同一個，或另外申請一個區分頻道）：
+```bash
+#!/bin/bash
+
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+URL="http://127.0.0.1:5080/"
+LOG_FILE="/var/log/service_watchdog.log"
+TIMEOUT=10
+DISCORD_WEBHOOK="<你的 Discord Webhook URL>"
+
+HTTP_CODE=$(/usr/bin/curl -s -o /dev/null -w "%{http_code}" --max-time $TIMEOUT "$URL")
+
+if [ "$HTTP_CODE" != "200" ] && [ "$HTTP_CODE" != "302" ]; then
+    MSG="🐟 [魚缸警報] fishtank.service 卡死 (HTTP_CODE=$HTTP_CODE)，已於 $(date '+%Y-%m-%d %H:%M:%S') 自動重啟"
+    echo "$(date): [異常] curl 逾時或回應碼異常 (HTTP_CODE=$HTTP_CODE)，重啟 fishtank.service" >> $LOG_FILE
+    /usr/bin/curl -s -H "Content-Type: application/json" \
+        -d "{\"content\": \"$MSG\"}" \
+        --max-time 10 \
+        "$DISCORD_WEBHOOK" >> $LOG_FILE 2>&1
+    /usr/bin/systemctl restart fishtank.service
+fi
+```
+
+用 `curl --max-time 10` 對本機 `http://127.0.0.1:5080/` 發請求；卡死時 curl 會逾時而非回傳錯誤碼，`--max-time` 是必要設定，否則 watchdog 自己也會卡住。回應非 200/302（含逾時）即視為異常，重啟服務並推播通知。
+
+**步驟 2：修正權限與建立 log 檔**
+```bash
+sudo sed -i 's/\r$//' /usr/local/bin/service_watchdog.sh
+sudo chmod +x /usr/local/bin/service_watchdog.sh
+sudo touch /var/log/service_watchdog.log
+```
+
+**步驟 3：手動測試**
+```bash
+sudo /usr/local/bin/service_watchdog.sh && echo "OK"
+cat /var/log/service_watchdog.log
+```
+
+### 3. 定時任務配置 (Crontab)
 透過 `sudo crontab -e` 加入：
 ```cron
 # 開機關閉 Wi-Fi 省電模式
@@ -261,15 +321,36 @@ cat /var/log/network_watchdog.log
 # 每 3 分鐘執行網路監控
 */3 * * * * /bin/bash /usr/local/bin/net_watchdog.sh
 
+# 每 5 分鐘檢查一次 fishtank 服務是否卡死
+*/5 * * * * /bin/bash /usr/local/bin/service_watchdog.sh
+
 # 每天凌晨 5 點重啟
 0 5 * * * /sbin/reboot
 ```
 
-### 3. 日誌追蹤
+### 4. 日誌追蹤
 ```bash
 cat /var/log/network_watchdog.log
+cat /var/log/service_watchdog.log
 journalctl -u fishtank.service --since "1 hour ago"
 ```
+
+### 5. 疑難排解：worker 卡在 boot 階段的死鎖
+
+若 `service_watchdog.sh` 頻繁觸發重啟，代表服務啟動時發生死鎖（非資源不足、非網路問題）。診斷方式：
+
+```bash
+# 找出真正的 worker PID（非 master）
+ps -ef --forest | grep gunicorn
+
+# dump 所有 thread 的呼叫堆疊，確認卡在哪個函式
+sudo <venv>/bin/py-spy dump --pid <worker_pid> --locals
+
+# 確認是否為真正的無限期等待（而非忙碌迴圈）
+sudo strace -p <worker_pid> -f -tt
+```
+
+`futex(..., FUTEX_WAIT..., NULL)`（無 timeout）代表真正的死鎖，需要在 watchdog 自動重啟前的視窗內（預設 5 分鐘）現場抓包才能定位問題程式碼；一旦重啟，卡死狀態即消失，無法回溯。相機（CSI/USB）與 GPIO 初始化是目前的頭號嫌疑，但尚未有 case 定位到具體行號。
 
 ---
 
@@ -284,9 +365,9 @@ journalctl -u fishtank.service --since "1 hour ago"
 - [x] 20 步曝光控制系統（手動 / 自動亮度）
 - [x] 雙餵食器自動餵食（A / B 獨立排程）
 - [x] OpenCV 視覺水位偵測（膠帶基準線 + 梯度分析）
-- [ ] 水位低時自動補水（補水馬達尚未接線）
+- [x] 水位低時自動補水（補水馬達尚未接線）
 - [ ] OpenCV 魚隻偵測
-- [ ] 環境光感應自動補光
+- [x] 環境光感應自動補光
 
 ---
 
