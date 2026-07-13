@@ -57,6 +57,7 @@
 | **Camera B** | USB V4L2 攝影機 | OpenCV，自動掃描 `/dev/video*`，by-path 持久綁定 |
 | **動力系統** | 28BYJ-48 × 2 + ULN2003 | 餵食器 A（GPIO 17,18,27,22）、B（GPIO 23,24,25,8） |
 | **燈光控制** | 繼電器模組 | GPIO 12，主動低電位單脈衝觸發 |
+| **換水系統** | 補水馬達 + 抽水馬達繼電器 | 補水（GPIO 26）、抽水（GPIO 20），一般繼電器主動低電位（LOW=導通/運轉，HIGH=斷開/停止） |
 | **外部訪問** | Synology Reverse Proxy | Port 5081 (HTTPS) → 5080 (HTTP) |
 | **安全憑證** | Let's Encrypt SSL | PWA 運作之必要條件 |
 
@@ -76,7 +77,9 @@
 │   ├── camera_ctrl.py      # CsiCamera（CSI A）、FishCamera（USB B）、enumerate_cameras
 │   ├── motor_ctrl.py       # FishFeeder（餵食器 A / B）
 │   ├── light_ctrl.py       # LightRelay（繼電器燈光）
-│   └── water_level.py      # WaterLevelDetector（OpenCV 水位偵測）
+│   ├── pump_ctrl.py        # PumpRelay（補水）、DrainRelay（抽水）
+│   ├── water_level.py      # WaterLevelDetector（OpenCV 水位偵測）
+│   └── water_sensor.py     # WaterLevelSensor（非接觸式電容感測器）
 ├── templates/
 │   ├── index.html          # 主介面（雙攝影機、縮放拖曳、排程 Modal、PWA）
 │   └── login.html          # 登入介面
