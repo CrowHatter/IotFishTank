@@ -291,9 +291,9 @@ def perform_water_change(source='manual'):
             print(f"[WaterChange] 緊急停止，不進行補水")
             return {'status': 'stopped', 'drain_s': 0, 'refill_result': None}
 
-        # 等待虹吸停止：抽水結束後靜待 60 秒再補水
-        print(f"[WaterChange] 抽水完成，等待 60s 讓虹吸停止")
-        siphon_deadline = time.time() + 60
+        # 等待虹吸停止：抽水結束後靜待 180 秒再補水
+        print(f"[WaterChange] 抽水完成，等待 180s 讓虹吸停止")
+        siphon_deadline = time.time() + 180
         while time.time() < siphon_deadline:
             if _stop_water_event.is_set():
                 print(f"[WaterChange] ⛔ 虹吸等待中收到緊急停止指令")
